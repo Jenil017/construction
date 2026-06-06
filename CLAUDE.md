@@ -69,6 +69,31 @@ Custom auth + OAuth. Sign-in issues a short-lived JWT access token + a refresh t
 Follow `docs/plan.md` phases in order — each builds on the last:
 **Phase 1 Foundation — DONE** (pnpm + Turborepo monorepo, both apps, DB/Drizzle, Pino logging, response/error infra, `/health`, Swagger UI) → 2 Auth & RBAC → 3 Company/Project/Site → 4 DPR → 5 Inventory → 6 Attendance & Salary → 7 Expenses/Purchases/Suppliers → 8 Reports & Queues → 9 Perf/Security/Production. Per-phase verification: TS typecheck, tests where practical, API route tests for key endpoints, migration verification, Swagger check, manual smoke test of the main flow.
 
+## After every feature or phase (definition of done)
+
+Run this checklist **after each feature is working and after each phase completes** — do not consider work finished until it's done:
+
+1. **Verify it works.** `pnpm typecheck` → `pnpm check` (Biome) → `pnpm build`. For DB changes: `pnpm db:generate` and apply/verify the migration. For API changes: smoke-test the endpoints (`wrangler dev` + `curl`, or Swagger at `/docs`). Report results honestly — if something fails or was skipped, say so.
+2. **Update the progress docs.** This is required, not optional:
+   - `docs/progress.md` — prepend an entry under the relevant phase (newest on top): decisions made, what was delivered, verification results, follow-ups. Convert relative dates to absolute.
+   - `docs/plan.md` — flip the phase/feature status marker (⬜ → ⏳ → ✅ with date) and update the progress banner near the top.
+3. **Update guidance docs if anything changed** — `CLAUDE.md` (commands, structure, conventions, new module patterns) and `README.md`. Keep them accurate; stale instructions are worse than none.
+4. **Check repo hygiene** — secrets stay only in gitignored files (`.dev.vars`, `.env`); nothing sensitive staged. `.claude/` stays untracked.
+5. **Commit only when the user asks.** Don't auto-commit; summarize what changed and offer to commit.
+
+## Use skills proactively
+
+Invoke a relevant skill **whenever it fits the task, even if the user didn't mention it** — don't wait to be told. Match the work to the skill:
+
+- **`hono`** — any backend route/middleware/validation/streaming work, or debugging Hono behavior.
+- **`wrangler`** — Workers dev/deploy, and provisioning/binding R2, Queues, KV, D1, secrets.
+- **`tailwind`**, **`responsive-design`**, **`frontend-design`** — building or styling any UI, layout, or component (mobile-first ERP screens).
+- **`vercel-react-best-practices`** — whenever writing, reviewing, or refactoring React/Next.js for performance and correctness.
+- **`debugger`** — investigating errors, crashes, stack traces, or "not working" reports.
+- **`claude-api`** — before any work involving Claude/Anthropic APIs, models, or pricing (read it first, don't answer from memory).
+
+If multiple apply, use them together. Prefer the skill's guidance over guessing.
+
 ## Monorepo layout
 
 pnpm workspaces + Turborepo. Internal packages are consumed as **TypeScript source** (no build step) — their `main` points at `src/index.ts`, so the API bundles them via esbuild and the web app via `transpilePackages`.

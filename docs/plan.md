@@ -2,7 +2,9 @@
 
 This plan converts the finalized ERP stack into practical delivery phases.
 
-## Phase 0: Project Setup And Documentation
+> **Progress:** Phase 0 ✅ · Phase 1 ✅ (2026-06-06) · Phase 2 ⏳ next. See `docs/progress.md` for the detailed log.
+
+## Phase 0: Project Setup And Documentation — ✅ Completed
 
 Goals:
 
@@ -22,7 +24,7 @@ Deliverables:
 - `docs/errors.md`
 - Initial repository structure
 
-## Phase 1: Foundation
+## Phase 1: Foundation — ✅ Completed (2026-06-06)
 
 Goals:
 
