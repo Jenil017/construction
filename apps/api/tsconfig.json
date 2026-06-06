@@ -1,0 +1,7 @@
+{
+  "extends": "@construction-erp/typescript-config/workers.json",
+  "compilerOptions": {
+    "baseUrl": "."
+  },
+  "include": ["src", "drizzle.config.ts", "worker-configuration.d.ts"]
+}

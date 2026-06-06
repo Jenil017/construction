@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "construction-erp-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-12-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "ENVIRONMENT": "development",
+    "FRONTEND_URL": "http://localhost:3000"
+  }
+  // Secrets (set via `wrangler secret put` in prod, `.dev.vars` locally):
+  //   DATABASE_URL, JWT_SECRET
+  // Bindings added in later phases:
+  //   r2_buckets   -> file storage (R2)
+  //   queues        -> PDF/Excel/image background jobs
+}

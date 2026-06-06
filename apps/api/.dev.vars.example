@@ -1,0 +1,4 @@
+# Local secrets for `wrangler dev`. Copy to `.dev.vars` (gitignored) and fill in.
+# The /health endpoint runs without these; DB-backed routes need DATABASE_URL.
+DATABASE_URL="postgresql://user:password@host.neon.tech/dbname?sslmode=require"
+JWT_SECRET="change-me-in-local-and-prod"

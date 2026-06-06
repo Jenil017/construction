@@ -1,0 +1,29 @@
+{
+  "name": "construction-erp",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "check": "biome check --write .",
+    "db:generate": "pnpm --filter @construction-erp/db generate",
+    "db:migrate": "pnpm --filter @construction-erp/db migrate",
+    "db:studio": "pnpm --filter @construction-erp/db studio",
+    "db:push": "pnpm --filter @construction-erp/db push"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@biomejs/biome", "esbuild", "sharp", "workerd"]
+  }
+}

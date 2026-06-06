@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+.pnpm-store/
+.claude/
+
+# build output
+.next/
+out/
+dist/
+build/
+.turbo/
+.vercel/
+
+# cloudflare / wrangler
+.wrangler/
+.dev.vars
+
+# env
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# os / editor
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+next-env.d.ts
