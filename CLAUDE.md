@@ -60,14 +60,24 @@ Three cross-cutting concerns shape almost every feature and span multiple files 
 - **shadcn/ui + Tailwind**; no business logic inside presentational components.
 - Show backend user-friendly messages near the relevant field/action; never surface raw error codes or stack traces.
 
-## Auth flow
+## Auth flow (Phase 2 — implemented)
 
-Custom auth + OAuth. Sign-in issues a short-lived JWT access token + a refresh token. Refresh tokens **rotate on use**; reuse of an old refresh token invalidates the whole session family. Logout revokes the active refresh token. Rate-limit login, token refresh, OAuth callbacks, signed-URL creation, and export generation.
+Custom email/password auth (no OAuth, no public signup — decided with the product owner). The first company + admin + default roles come from `pnpm db:seed`; the admin provisions everyone else via the Users module with module-wise permissions.
+
+- **Tokens:** sign-in issues a short-lived JWT **access token** (15 min, HS256 via `hono/jwt`, secret `JWT_SECRET`) + an opaque **refresh token**. The DB (`refresh_tokens`) is the refresh token's source of truth — only its SHA-256 hash is stored. Refresh tokens **rotate on use**; replaying a rotated token triggers **family-wide revocation** (`REFRESH_TOKEN_REUSED`). Logout revokes the active token. The web client keeps both tokens in `localStorage`; `apiFetch` attaches the Bearer header and does a single-flight refresh on `TOKEN_EXPIRED`.
+- **Passwords:** PBKDF2 via Web Crypto in `packages/shared/src/crypto` (`hashPassword`/`verifyPassword`) — isomorphic (Workers/Node/browser), shared by the API and the seed. Never bcrypt/argon2 (no Workers bindings).
+- **RBAC:** permission = `{ module, action, scope }`. Roles bundle permissions (`role_permissions`); users hold roles (`user_roles`). Default templates live in `packages/shared/src/rbac/role-templates.ts` (Owner = all). On each protected request, `requireAuth` loads the user's flattened permissions from the DB (one indexed join) and sets `c.var.auth`; `requirePermission(module, action)` gates the route. Scope (`site`/`own`) row-filtering is stored now but enforced from Phase 3+ once sites exist.
+- **Protecting a route:** add middleware to the OpenAPI route definition —
+  `createRoute({ ..., middleware: [requireAuth, requirePermission("users", "create")] as const })`.
+  Read the principal in the handler via `c.get("auth")` (`{ userId, companyId, email, name, roles, permissions }`). Always filter queries by `auth.companyId`.
+- **DB access in handlers:** `getDb(c)` (lazy, per-request Neon Pool). Multi-table writes use `db.transaction(...)`; service helpers accept `DbClient` so they compose inside a tx. Audit mutations with `writeAudit(db, {...})` (never log passwords/tokens).
+- **Rate limiting:** best-effort in-isolate limiter on login/refresh today; KV/Durable-Object-backed limiting is Phase 9. OAuth callbacks/signed-URL/export limits land with those phases.
+- **Frontend:** `AuthProvider`/`useAuth` (`apps/web/src/lib/auth`) expose `user`, `login`, `logout`, and `can(module, action)`; `AuthGuard` protects the app shell; nav and action buttons are permission-filtered (the backend is still the security boundary).
 
 ## Build order
 
 Follow `docs/plan.md` phases in order — each builds on the last:
-**Phase 1 Foundation — DONE** (pnpm + Turborepo monorepo, both apps, DB/Drizzle, Pino logging, response/error infra, `/health`, Swagger UI) → 2 Auth & RBAC → 3 Company/Project/Site → 4 DPR → 5 Inventory → 6 Attendance & Salary → 7 Expenses/Purchases/Suppliers → 8 Reports & Queues → 9 Perf/Security/Production. Per-phase verification: TS typecheck, tests where practical, API route tests for key endpoints, migration verification, Swagger check, manual smoke test of the main flow.
+**Phase 1 Foundation — DONE** (pnpm + Turborepo monorepo, both apps, DB/Drizzle, Pino logging, response/error infra, `/health`, Swagger UI) → **2 Auth & RBAC — DONE** (custom email/password auth, JWT access + rotating refresh tokens with reuse detection, permission-based RBAC, seeded admin, Users/Roles APIs + admin UI) → 3 Company/Project/Site → 4 DPR → 5 Inventory → 6 Attendance & Salary → 7 Expenses/Purchases/Suppliers → 8 Reports & Queues → 9 Perf/Security/Production. Per-phase verification: TS typecheck, tests where practical, API route tests for key endpoints, migration verification, Swagger check, manual smoke test of the main flow.
 
 ## After every feature or phase (definition of done)
 
@@ -101,8 +111,8 @@ pnpm workspaces + Turborepo. Internal packages are consumed as **TypeScript sour
 ```
 apps/web    Next.js 15 (App Router, Tailwind v4, shadcn/ui, TanStack Query) — Vercel
 apps/api    Hono on Cloudflare Workers (@hono/zod-openapi + Swagger UI, Pino) — entry src/index.ts
-packages/shared             response envelope, ERROR_CODES, RBAC constants, pagination — used by BOTH apps
-packages/db                 Drizzle schema + Neon client; tables added per phase to src/schema/
+packages/shared             response envelope, ERROR_CODES, RBAC constants + role templates, pagination, isomorphic crypto (PBKDF2/token hashing) — used by BOTH apps
+packages/db                 Drizzle schema + Neon client + idempotent seed (src/seed.ts); tables added per phase to src/schema/
 packages/typescript-config  shared tsconfig bases (base / nextjs / workers)
 ```
 
@@ -124,6 +134,7 @@ pnpm check                                      # Biome lint + format (auto-fix)
 pnpm build                                      # next build + wrangler dry-run bundle
 pnpm db:generate                                # generate a migration from schema (offline, no DB)
 pnpm db:migrate                                 # apply migrations (needs DATABASE_URL)
+pnpm db:seed                                     # seed first company + admin + default roles (idempotent; needs DATABASE_URL)
 ```
 
 To verify the API runtime: `wrangler dev` then `curl localhost:8787/health` (returns the success envelope; no DB needed). Lint/format is **Biome** (`biome.json`) — there is no ESLint/Prettier.

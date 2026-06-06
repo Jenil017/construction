@@ -2,7 +2,7 @@
 
 This plan converts the finalized ERP stack into practical delivery phases.
 
-> **Progress:** Phase 0 ✅ · Phase 1 ✅ (2026-06-06) · Phase 2 ⏳ next. See `docs/progress.md` for the detailed log.
+> **Progress:** Phase 0 ✅ · Phase 1 ✅ (2026-06-06) · Phase 2 ✅ (2026-06-06) · Phase 3 ⏳ next. See `docs/progress.md` for the detailed log.
 
 ## Phase 0: Project Setup And Documentation — ✅ Completed
 
@@ -47,7 +47,7 @@ Deliverables:
 - Swagger UI base setup
 - Shared coding conventions
 
-## Phase 2: Authentication And RBAC
+## Phase 2: Authentication And RBAC — ✅ Completed (2026-06-06)
 
 Goals:
 

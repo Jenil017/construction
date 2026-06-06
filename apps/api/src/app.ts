@@ -6,7 +6,10 @@ import { ValidationError } from "./common/errors";
 import { notFound, onError } from "./common/middleware/error-handler";
 import { loggerMiddleware } from "./common/middleware/logger";
 import type { Env } from "./env";
+import { authRoutes } from "./modules/auth";
 import { healthRoutes } from "./modules/health";
+import { roleRoutes } from "./modules/roles";
+import { userRoutes } from "./modules/users";
 
 export function createApp() {
   const app = new OpenAPIHono<Env>({
@@ -36,6 +39,16 @@ export function createApp() {
 
   // Feature modules.
   app.route("/", healthRoutes);
+  app.route("/", authRoutes);
+  app.route("/", userRoutes);
+  app.route("/", roleRoutes);
+
+  // Bearer auth scheme so protected endpoints are marked + testable in Swagger.
+  app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {
+    type: "http",
+    scheme: "bearer",
+    bearerFormat: "JWT",
+  });
 
   // OpenAPI document + Swagger UI (see docs/backend_guideline.md "Swagger UI").
   app.doc("/openapi.json", {
@@ -46,6 +59,7 @@ export function createApp() {
       description:
         "Multi-tenant construction ERP backend. All responses use the standard envelope.",
     },
+    security: [{ bearerAuth: [] }],
   });
   app.get("/docs", swaggerUI({ url: "/openapi.json" }));
 

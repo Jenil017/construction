@@ -1,4 +1,3 @@
-import { sql } from "drizzle-orm";
 import { timestamp, uuid } from "drizzle-orm/pg-core";
 
 /**
@@ -17,10 +16,13 @@ export const primaryId = {
 
 export const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // `$onUpdate` returns a JS Date (mapped to the driver) rather than `sql\`now()\``:
+  // drizzle maps the set value via the column's mapToDriverValue, and an inlined
+  // SQL expression there is not handled, so a Date is the reliable idiom.
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow()
-    .$onUpdate(() => sql`now()`),
+    .$onUpdate(() => new Date()),
 };
 
 export const softDelete = {

@@ -7,8 +7,12 @@ Multi-tenant ERP for contractors and builders — site tracking, DPR, inventory,
 - **Web** (`apps/web`) — Next.js 15 (App Router), TypeScript, Tailwind v4, shadcn/ui, TanStack Query/Table, React Hook Form + Zod. Hosted on Vercel.
 - **API** (`apps/api`) — Hono on Cloudflare Workers, OpenAPI + Swagger UI, Pino. Hosted on Cloudflare.
 - **DB** (`packages/db`) — Neon Postgres + Drizzle ORM/Kit.
-- **Shared** (`packages/shared`) — response envelope, error codes, RBAC + pagination contracts.
+- **Shared** (`packages/shared`) — response envelope, error codes, RBAC constants + role templates, pagination, isomorphic crypto.
 - Monorepo: pnpm workspaces + Turborepo. Lint/format: Biome.
+
+## Status
+
+Phase 1 (Foundation) and Phase 2 (Authentication & RBAC) are complete. Auth is custom email/password (JWT access + rotating refresh tokens with reuse detection) and permission-based RBAC; the first admin is created by `pnpm db:seed`, then provisions users/roles from the in-app **Settings** screens. See [`docs/progress.md`](./docs/progress.md).
 
 ## Prerequisites
 
@@ -23,7 +27,11 @@ pnpm install
 # Local env files
 cp apps/web/.env.example apps/web/.env
 cp apps/api/.dev.vars.example apps/api/.dev.vars   # fill in DATABASE_URL, JWT_SECRET
-cp packages/db/.env.example packages/db/.env       # DATABASE_URL for Drizzle CLI
+cp packages/db/.env.example packages/db/.env       # DATABASE_URL + SEED_* for Drizzle CLI / seed
+
+# Create the schema and the first admin
+pnpm db:migrate
+pnpm db:seed    # prints the seeded admin email/password (change after first login)
 ```
 
 ## Common commands
@@ -40,6 +48,7 @@ pnpm lint           # Biome check (no writes)
 
 pnpm db:generate    # generate a migration from the Drizzle schema (offline)
 pnpm db:migrate     # apply migrations (needs DATABASE_URL)
+pnpm db:seed        # seed first company + admin + default roles (idempotent)
 pnpm db:studio      # Drizzle Studio
 ```
 
@@ -50,8 +59,8 @@ apps/
   web/   Next.js frontend
   api/   Hono API on Cloudflare Workers
 packages/
-  shared/             cross-app contracts (response envelope, error codes, RBAC, pagination)
-  db/                 Drizzle schema, client, migrations
+  shared/             cross-app contracts (response envelope, error codes, RBAC + role templates, pagination, crypto)
+  db/                 Drizzle schema, client, migrations, seed
   typescript-config/  shared tsconfig bases
 docs/                 product + engineering specs (source of truth)
 ```

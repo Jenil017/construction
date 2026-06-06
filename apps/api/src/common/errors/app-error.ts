@@ -40,6 +40,24 @@ export class AuthenticationError extends AppError {
   }
 }
 
+export class InvalidCredentialsError extends AppError {
+  constructor(message = "Incorrect email or password.") {
+    super({ code: ERROR_CODES.INVALID_CREDENTIALS, message, status: 401 });
+  }
+}
+
+export class TokenExpiredError extends AppError {
+  constructor(message = "Your session has expired. Please sign in again.") {
+    super({ code: ERROR_CODES.TOKEN_EXPIRED, message, status: 401 });
+  }
+}
+
+export class RefreshTokenReuseError extends AppError {
+  constructor(message = "Your session is no longer valid. Please sign in again.") {
+    super({ code: ERROR_CODES.REFRESH_TOKEN_REUSED, message, status: 401 });
+  }
+}
+
 export class AuthorizationError extends AppError {
   constructor(message = "You do not have permission to perform this action.") {
     super({ code: ERROR_CODES.PERMISSION_DENIED, message, status: 403 });
