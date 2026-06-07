@@ -19,7 +19,7 @@ import { Loader2, Plus, Search } from "lucide-react";
 import { useState } from "react";
 
 export default function UsersPage() {
-  const { can } = useAuth();
+  const { can, activeSite } = useAuth();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "disabled">("all");
   const {
@@ -61,15 +61,15 @@ export default function UsersPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Members</h1>
           <p className="text-sm text-muted-foreground">
-            Manage who can access the system and what they can do.
+            People with access to {activeSite ? activeSite.name : "this site"} and what they can do.
           </p>
         </div>
         {canCreate ? (
           <Button onClick={openCreate}>
             <Plus className="size-4" />
-            Add user
+            Add member
           </Button>
         ) : null}
       </div>
@@ -123,7 +123,7 @@ export default function UsersPage() {
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Roles</TableHead>
+                <TableHead>Access</TableHead>
                 {canUpdate || canDelete ? (
                   <TableHead className="text-right">Actions</TableHead>
                 ) : null}
@@ -139,14 +139,15 @@ export default function UsersPage() {
                       {user.status}
                     </Badge>
                   </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {user.roles.map((r) => (
-                        <Badge key={r.id} variant="brand">
-                          {r.name}
-                        </Badge>
-                      ))}
-                    </div>
+                  <TableCell className="text-muted-foreground">
+                    {(() => {
+                      const total = user.permissions.length;
+                      if (total === 0) return "No access";
+                      const write = user.permissions.filter((p) => p.level === "read_write").length;
+                      return `${total} module${total > 1 ? "s" : ""}${
+                        write > 0 ? ` · ${write} write` : ""
+                      }`;
+                    })()}
                   </TableCell>
                   {canUpdate || canDelete ? (
                     <TableCell className="text-right">

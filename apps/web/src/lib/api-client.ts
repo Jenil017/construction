@@ -1,5 +1,5 @@
 import { type ApiResponse, ERROR_CODES } from "@construction-erp/shared";
-import { tokenStore } from "./auth/token-store";
+import { siteStore, tokenStore } from "./auth/token-store";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8787";
 
@@ -66,6 +66,9 @@ async function request<T>(path: string, options: ApiFetchOptions, retry: boolean
   if (!skipAuth) {
     const token = tokenStore.getAccess();
     if (token) finalHeaders.Authorization = `Bearer ${token}`;
+    // Scope every authed request to the active site.
+    const siteId = siteStore.get();
+    if (siteId) finalHeaders["X-Site-Id"] = siteId;
   }
 
   const res = await fetch(`${API_URL}${path}`, { ...init, headers: finalHeaders });
@@ -75,6 +78,12 @@ async function request<T>(path: string, options: ApiFetchOptions, retry: boolean
     if (!skipAuth && retry && json.error.code === ERROR_CODES.TOKEN_EXPIRED) {
       if (await tryRefresh()) return request<T>(path, options, false);
       redirectToLogin();
+    }
+    // The active site was revoked/removed mid-session: drop it and reload so the
+    // app re-fetches /auth/me and picks a site the user can still access.
+    if (json.error.code === ERROR_CODES.SITE_ACCESS_REVOKED) {
+      siteStore.clear();
+      if (typeof window !== "undefined") window.location.reload();
     }
     throw new ApiError(json.error.code, json.error.message, json.error.details);
   }

@@ -1,6 +1,5 @@
 import { index, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 import { primaryId } from "./_shared";
-import { companies } from "./companies";
 import { users } from "./users";
 
 /**
@@ -18,9 +17,6 @@ export const refreshTokens = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    companyId: uuid("company_id")
-      .notNull()
-      .references(() => companies.id),
     familyId: uuid("family_id").notNull(),
     tokenHash: varchar("token_hash", { length: 64 }).notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),

@@ -1,10 +1,16 @@
-import { rolePermissions, roles, userRoles } from "@construction-erp/db/schema";
-import type { Permission, RbacAction, RbacModule, RbacScope } from "@construction-erp/shared";
-import { and, eq, isNull } from "drizzle-orm";
-import type { AuthRole } from "../auth/context";
+import { siteMemberPermissions, siteMembers, sites } from "@construction-erp/db/schema";
+import {
+  ACTIONS_FOR_LEVEL,
+  type AccessLevel,
+  type Permission,
+  type RbacAction,
+  type RbacModule,
+  fullPermissions,
+} from "@construction-erp/shared";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { DbClient } from "../db";
 
-/** True if the permission set grants `action` on `module` (any scope). */
+/** True if the permission set grants `action` on `module`. */
 export function hasPermission(
   permissions: Permission[],
   module: RbacModule,
@@ -13,58 +19,137 @@ export function hasPermission(
   return permissions.some((p) => p.module === module && p.action === action);
 }
 
-// Broader scope wins when two roles grant the same module:action.
-const SCOPE_RANK: Record<RbacScope, number> = { company: 3, site: 2, own: 1 };
+export interface UserSiteAccess {
+  isOwner: boolean;
+  permissions: Permission[];
+}
 
-export interface UserAccess {
-  roles: AuthRole[];
+/** Expand stored (module, level) rows into flat `{ module, action }` permissions. */
+function expandRows(rows: { module: string; accessLevel: string }[]): Permission[] {
+  const permissions: Permission[] = [];
+  for (const row of rows) {
+    const actions = ACTIONS_FOR_LEVEL[row.accessLevel as AccessLevel] ?? [];
+    for (const action of actions) permissions.push({ module: row.module as RbacModule, action });
+  }
+  return permissions;
+}
+
+/**
+ * Resolve a user's access to one site. The owner short-circuits to full access
+ * (no membership row needed). A member's per-module levels are loaded and
+ * expanded to actions. Returns null when the user neither owns nor is a member
+ * of the site (→ no access).
+ */
+export async function loadUserSiteAccess(
+  db: DbClient,
+  userId: string,
+  siteId: string,
+): Promise<UserSiteAccess | null> {
+  const [site] = await db
+    .select({ id: sites.id, ownerUserId: sites.ownerUserId })
+    .from(sites)
+    .where(and(eq(sites.id, siteId), isNull(sites.deletedAt)))
+    .limit(1);
+  if (!site) return null;
+
+  if (site.ownerUserId === userId) {
+    return { isOwner: true, permissions: fullPermissions() };
+  }
+
+  const [member] = await db
+    .select({ id: siteMembers.id })
+    .from(siteMembers)
+    .where(and(eq(siteMembers.siteId, siteId), eq(siteMembers.userId, userId)))
+    .limit(1);
+  if (!member) return null;
+
+  const rows = await db
+    .select({
+      module: siteMemberPermissions.module,
+      accessLevel: siteMemberPermissions.accessLevel,
+    })
+    .from(siteMemberPermissions)
+    .where(eq(siteMemberPermissions.siteMemberId, member.id));
+
+  return { isOwner: false, permissions: expandRows(rows) };
+}
+
+export interface UserSiteEntry {
+  id: string;
+  name: string;
+  code: string | null;
+  city: string | null;
+  status: string;
+  role: "owner" | "member";
   permissions: Permission[];
 }
 
 /**
- * Load a user's roles and flattened permissions in a single indexed join
- * (user_roles → roles → role_permissions). Called per protected request so
- * permission changes take effect promptly. Soft-deleted roles are excluded.
+ * Load every site a user can access (owned + member), with that site's permissions.
+ * Powers the site switcher and the `/auth/me` + login responses. Owned sites get
+ * the implicit full permission set. Avoids N+1 by loading all member permissions
+ * in one query.
  */
-export async function loadUserAccess(
-  db: DbClient,
-  userId: string,
-  companyId: string,
-): Promise<UserAccess> {
-  const rows = await db
+export async function loadUserSites(db: DbClient, userId: string): Promise<UserSiteEntry[]> {
+  const owned = await db
     .select({
-      roleId: roles.id,
-      roleSlug: roles.slug,
-      roleName: roles.name,
-      module: rolePermissions.module,
-      action: rolePermissions.action,
-      scope: rolePermissions.scope,
+      id: sites.id,
+      name: sites.name,
+      code: sites.code,
+      city: sites.city,
+      status: sites.status,
     })
-    .from(userRoles)
-    .innerJoin(roles, and(eq(roles.id, userRoles.roleId), isNull(roles.deletedAt)))
-    .leftJoin(rolePermissions, eq(rolePermissions.roleId, roles.id))
-    .where(and(eq(userRoles.userId, userId), eq(userRoles.companyId, companyId)));
+    .from(sites)
+    .where(and(eq(sites.ownerUserId, userId), isNull(sites.deletedAt)));
 
-  const roleMap = new Map<string, AuthRole>();
-  const permMap = new Map<string, Permission>();
+  const memberRows = await db
+    .select({
+      memberId: siteMembers.id,
+      id: sites.id,
+      name: sites.name,
+      code: sites.code,
+      city: sites.city,
+      status: sites.status,
+    })
+    .from(siteMembers)
+    .innerJoin(sites, and(eq(sites.id, siteMembers.siteId), isNull(sites.deletedAt)))
+    .where(eq(siteMembers.userId, userId));
 
-  for (const row of rows) {
-    if (!roleMap.has(row.roleId)) {
-      roleMap.set(row.roleId, { id: row.roleId, slug: row.roleSlug, name: row.roleName });
-    }
-    if (row.module && row.action && row.scope) {
-      const key = `${row.module}:${row.action}`;
-      const next: Permission = {
-        module: row.module as RbacModule,
-        action: row.action as RbacAction,
-        scope: row.scope as RbacScope,
-      };
-      const existing = permMap.get(key);
-      if (!existing || SCOPE_RANK[next.scope] > SCOPE_RANK[existing.scope]) {
-        permMap.set(key, next);
-      }
+  // Load all member-permission rows for this user's memberships in one query.
+  const memberIds = memberRows.map((r) => r.memberId);
+  const permsByMember = new Map<string, Permission[]>();
+  if (memberIds.length > 0) {
+    const permRows = await db
+      .select({
+        siteMemberId: siteMemberPermissions.siteMemberId,
+        module: siteMemberPermissions.module,
+        accessLevel: siteMemberPermissions.accessLevel,
+      })
+      .from(siteMemberPermissions)
+      .where(inArray(siteMemberPermissions.siteMemberId, memberIds));
+    for (const row of permRows) {
+      const list = permsByMember.get(row.siteMemberId) ?? [];
+      const actions = ACTIONS_FOR_LEVEL[row.accessLevel as AccessLevel] ?? [];
+      for (const action of actions) list.push({ module: row.module as RbacModule, action });
+      permsByMember.set(row.siteMemberId, list);
     }
   }
 
-  return { roles: [...roleMap.values()], permissions: [...permMap.values()] };
+  const full = fullPermissions();
+  const ownedEntries: UserSiteEntry[] = owned.map((s) => ({
+    ...s,
+    role: "owner" as const,
+    permissions: full,
+  }));
+  const memberEntries: UserSiteEntry[] = memberRows.map((s) => ({
+    id: s.id,
+    name: s.name,
+    code: s.code,
+    city: s.city,
+    status: s.status,
+    role: "member" as const,
+    permissions: permsByMember.get(s.memberId) ?? [],
+  }));
+
+  return [...ownedEntries, ...memberEntries];
 }

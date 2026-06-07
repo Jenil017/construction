@@ -28,7 +28,6 @@ export interface IssuedRefreshToken {
 
 async function buildRefreshRecord(params: {
   userId: string;
-  companyId: string;
   familyId: string;
   meta?: RefreshTokenMeta;
 }): Promise<{ rawToken: string; expiresAt: Date; row: NewRefreshToken }> {
@@ -40,7 +39,6 @@ async function buildRefreshRecord(params: {
     expiresAt,
     row: {
       userId: params.userId,
-      companyId: params.companyId,
       familyId: params.familyId,
       tokenHash,
       expiresAt,
@@ -53,7 +51,7 @@ async function buildRefreshRecord(params: {
 /** Issue a brand-new session (new family). Used at login. */
 export async function issueRefreshToken(
   db: DbClient,
-  params: { userId: string; companyId: string; meta?: RefreshTokenMeta },
+  params: { userId: string; meta?: RefreshTokenMeta },
 ): Promise<IssuedRefreshToken> {
   const familyId = crypto.randomUUID();
   const { rawToken, expiresAt, row } = await buildRefreshRecord({ ...params, familyId });
@@ -64,7 +62,6 @@ export async function issueRefreshToken(
 
 export interface RotatedRefreshToken extends IssuedRefreshToken {
   userId: string;
-  companyId: string;
 }
 
 /**
@@ -115,7 +112,6 @@ export async function rotateRefreshToken(
     row,
   } = await buildRefreshRecord({
     userId: current.userId,
-    companyId: current.companyId,
     familyId: current.familyId,
     meta,
   });
@@ -137,19 +133,18 @@ export async function rotateRefreshToken(
       familyId: current.familyId,
       expiresAt,
       userId: current.userId,
-      companyId: current.companyId,
     };
   });
 }
 
-/** Look up the user/company a refresh token belongs to (for logout auditing). */
+/** Look up the user a refresh token belongs to (for logout auditing). */
 export async function findRefreshTokenOwner(
   db: DbClient,
   rawToken: string,
-): Promise<{ userId: string; companyId: string } | null> {
+): Promise<{ userId: string } | null> {
   const tokenHash = await sha256Hex(rawToken);
   const [row] = await db
-    .select({ userId: refreshTokens.userId, companyId: refreshTokens.companyId })
+    .select({ userId: refreshTokens.userId })
     .from(refreshTokens)
     .where(eq(refreshTokens.tokenHash, tokenHash))
     .limit(1);

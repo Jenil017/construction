@@ -1,26 +1,32 @@
-import { DEFAULT_ROLE_TEMPLATES, OWNER_ROLE_SLUG, hashPassword } from "@construction-erp/shared";
+import { type AccessLevel, type RbacModule, hashPassword } from "@construction-erp/shared";
 import { eq } from "drizzle-orm";
 import { configureNeonForNode, createDb } from "./client";
-import { companies, rolePermissions, roles, userRoles, users } from "./schema";
+import { siteMemberPermissions, siteMembers, sites, users } from "./schema";
 
 /**
- * Idempotent seed: creates the first company, its default system roles (with
- * permissions), and an admin user assigned the Owner role. There is no public
- * signup — the admin then provisions other users via the Users module.
+ * Idempotent seed for the site-as-tenant model. Creates:
+ *   - the owner user (is_owner = true) — admin@demo.test by default,
+ *   - three sample sites owned by the owner,
+ *   - one member user assigned to two of those sites with different access
+ *     levels (read-only on one, read+write on another) to demo the switcher.
  *
- * Run with `pnpm db:seed` (needs DATABASE_URL). Credentials come from env:
- *   SEED_COMPANY_NAME, SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD, SEED_ADMIN_NAME.
+ * There is no public signup — the owner provisions other users (per site) via
+ * the Users module. Run with `pnpm db:seed` (needs DATABASE_URL). Credentials
+ * come from env: SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD, SEED_ADMIN_NAME.
  */
 
-function slugify(input: string): string {
-  const slug = input
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-  return slug || "company";
-}
+// Modules a site member is typically granted (the owner always has full access).
+const MEMBER_MODULES: RbacModule[] = [
+  "dashboard",
+  "dpr",
+  "inventory",
+  "attendance",
+  "salary",
+  "expenses",
+  "purchases",
+  "suppliers",
+  "reports",
+];
 
 async function main(): Promise<void> {
   try {
@@ -32,79 +38,86 @@ async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required to seed.");
 
-  const companyName = process.env.SEED_COMPANY_NAME ?? "Demo Construction Co";
-  const adminEmail = (process.env.SEED_ADMIN_EMAIL ?? "admin@demo.test").toLowerCase();
-  const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? "ChangeMe123!";
-  const adminName = process.env.SEED_ADMIN_NAME ?? "Admin";
-  const slug = slugify(companyName);
+  const ownerEmail = (process.env.SEED_ADMIN_EMAIL ?? "admin@demo.test").toLowerCase();
+  const ownerPassword = process.env.SEED_ADMIN_PASSWORD ?? "ChangeMe123!";
+  const ownerName = process.env.SEED_ADMIN_NAME ?? "Jemish";
+  const memberEmail = (process.env.SEED_MEMBER_EMAIL ?? "partner@demo.test").toLowerCase();
+  const memberPassword = process.env.SEED_MEMBER_PASSWORD ?? "ChangeMe123!";
+  const memberName = process.env.SEED_MEMBER_NAME ?? "Jainil";
 
   await configureNeonForNode();
   const db = createDb(databaseUrl);
 
-  const existing = await db.select().from(companies).where(eq(companies.slug, slug)).limit(1);
+  const existing = await db.select().from(users).where(eq(users.email, ownerEmail)).limit(1);
   if (existing.length > 0) {
-    console.log(`Company "${companyName}" (slug: ${slug}) already exists — skipping seed.`);
+    console.log(`Owner "${ownerEmail}" already exists — skipping seed.`);
     return;
   }
 
+  const ownerHash = await hashPassword(ownerPassword);
+  const memberHash = await hashPassword(memberPassword);
+
   await db.transaction(async (tx) => {
-    const [company] = await tx.insert(companies).values({ name: companyName, slug }).returning();
-    if (!company) throw new Error("Failed to create company.");
-
-    const slugToRoleId = new Map<string, string>();
-    for (const template of DEFAULT_ROLE_TEMPLATES) {
-      const [role] = await tx
-        .insert(roles)
-        .values({
-          companyId: company.id,
-          name: template.name,
-          slug: template.slug,
-          description: template.description,
-          isSystem: template.isSystem,
-        })
-        .returning();
-      if (!role) throw new Error(`Failed to create role "${template.slug}".`);
-      slugToRoleId.set(template.slug, role.id);
-
-      if (template.permissions.length > 0) {
-        await tx.insert(rolePermissions).values(
-          template.permissions.map((permission) => ({
-            roleId: role.id,
-            module: permission.module,
-            action: permission.action,
-            scope: permission.scope,
-          })),
-        );
-      }
-    }
-
-    const passwordHash = await hashPassword(adminPassword);
-    const [admin] = await tx
+    const [owner] = await tx
       .insert(users)
-      .values({
-        companyId: company.id,
-        email: adminEmail,
-        passwordHash,
-        name: adminName,
-        status: "active",
-      })
+      .values({ email: ownerEmail, passwordHash: ownerHash, name: ownerName, isOwner: true })
       .returning();
-    if (!admin) throw new Error("Failed to create admin user.");
+    if (!owner) throw new Error("Failed to create owner.");
 
-    const ownerRoleId = slugToRoleId.get(OWNER_ROLE_SLUG);
-    if (!ownerRoleId) throw new Error("Owner role was not created.");
-    await tx.insert(userRoles).values({
-      userId: admin.id,
-      roleId: ownerRoleId,
-      companyId: company.id,
-    });
+    const siteRows = await tx
+      .insert(sites)
+      .values([
+        { ownerUserId: owner.id, name: "Vesu", code: "VESU", city: "Surat", state: "Gujarat" },
+        {
+          ownerUserId: owner.id,
+          name: "Ahmedabad",
+          code: "AMD",
+          city: "Ahmedabad",
+          state: "Gujarat",
+        },
+        {
+          ownerUserId: owner.id,
+          name: "Mota Varacha",
+          code: "MV",
+          city: "Surat",
+          state: "Gujarat",
+        },
+      ])
+      .returning();
+    const vesu = siteRows.find((s) => s.code === "VESU");
+    const mota = siteRows.find((s) => s.code === "MV");
+    if (!vesu || !mota) throw new Error("Failed to create sample sites.");
+
+    const [member] = await tx
+      .insert(users)
+      .values({ email: memberEmail, passwordHash: memberHash, name: memberName, isOwner: false })
+      .returning();
+    if (!member) throw new Error("Failed to create member.");
+
+    // Member on two sites with different access (demonstrates the switcher).
+    const assignments: { siteId: string; level: AccessLevel }[] = [
+      { siteId: vesu.id, level: "read" },
+      { siteId: mota.id, level: "read_write" },
+    ];
+    for (const { siteId, level } of assignments) {
+      const [m] = await tx.insert(siteMembers).values({ siteId, userId: member.id }).returning();
+      if (!m) throw new Error("Failed to create site membership.");
+      await tx.insert(siteMemberPermissions).values(
+        MEMBER_MODULES.map((module) => ({
+          siteMemberId: m.id,
+          module,
+          accessLevel: level,
+        })),
+      );
+    }
   });
 
   console.log("Seed complete.");
-  console.log(`  Company:  ${companyName} (${slug})`);
-  console.log(`  Admin:    ${adminEmail}`);
-  console.log(`  Password: ${adminPassword}`);
-  console.log("  -> Change this password after first login.");
+  console.log(`  Owner:    ${ownerEmail} (is_owner)`);
+  console.log("  Sites:    Vesu, Ahmedabad, Mota Varacha");
+  console.log(`  Member:   ${memberEmail} (read on Vesu, read+write on Mota Varacha)`);
+  console.log(`  Password: ${ownerPassword}`);
+  console.log("  -> Change these passwords after first login.");
 }
 
 main()

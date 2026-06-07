@@ -7,8 +7,9 @@ import { notFound, onError } from "./common/middleware/error-handler";
 import { loggerMiddleware } from "./common/middleware/logger";
 import type { Env } from "./env";
 import { authRoutes } from "./modules/auth";
+import { dprRoutes } from "./modules/dpr";
 import { healthRoutes } from "./modules/health";
-import { roleRoutes } from "./modules/roles";
+import { siteRoutes } from "./modules/sites";
 import { userRoutes } from "./modules/users";
 
 export function createApp() {
@@ -40,8 +41,9 @@ export function createApp() {
   // Feature modules.
   app.route("/", healthRoutes);
   app.route("/", authRoutes);
+  app.route("/", siteRoutes);
   app.route("/", userRoutes);
-  app.route("/", roleRoutes);
+  app.route("/", dprRoutes);
 
   // Bearer auth scheme so protected endpoints are marked + testable in Swagger.
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {

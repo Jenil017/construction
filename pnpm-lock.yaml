@@ -32,6 +32,9 @@ importers:
       '@hono/zod-openapi':
         specifier: ^0.18.3
         version: 0.18.4(hono@4.12.23)(zod@3.25.76)
+      aws4fetch:
+        specifier: ^1.0.20
+        version: 1.0.20
       drizzle-orm:
         specifier: ^0.38.3
         version: 0.38.4(@cloudflare/workers-types@4.20260606.1)(@neondatabase/serverless@0.10.4)(@types/pg@8.11.6)(@types/react@19.2.17)(react@19.2.7)
@@ -1448,6 +1451,9 @@ packages:
   atomic-sleep@1.0.0:
     resolution: {integrity: sha512-kNOjDqAh7px0XWNI+4QbzoiR/nTkHAWNud2uvnJquD1/x5a7EQZMJT0AczqK0Qn67oY/TTQ1LbUKajZpp3I9tQ==}
     engines: {node: '>=8.0.0'}
+
+  aws4fetch@1.0.20:
+    resolution: {integrity: sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==}
 
   blake3-wasm@2.1.5:
     resolution: {integrity: sha512-F1+K8EbfOZE49dtoPtmxUQrpXaBIl3ICvasLh+nJta0xkz+9kF/7uet9fLnwKqhDrmj6g+6K3Tw9yQPUg2ka5g==}
@@ -2884,6 +2890,8 @@ snapshots:
       printable-characters: 1.0.42
 
   atomic-sleep@1.0.0: {}
+
+  aws4fetch@1.0.20: {}
 
   blake3-wasm@2.1.5: {}
 

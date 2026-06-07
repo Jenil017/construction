@@ -7,8 +7,22 @@
  */
 const ACCESS_KEY = "erp.accessToken";
 const REFRESH_KEY = "erp.refreshToken";
+const SITE_KEY = "erp.activeSiteId";
 
 const isBrowser = () => typeof window !== "undefined";
+
+/** The active site id, sent as `X-Site-Id` so all data scopes to that site. */
+export const siteStore = {
+  get(): string | null {
+    return isBrowser() ? window.localStorage.getItem(SITE_KEY) : null;
+  },
+  set(siteId: string): void {
+    if (isBrowser()) window.localStorage.setItem(SITE_KEY, siteId);
+  },
+  clear(): void {
+    if (isBrowser()) window.localStorage.removeItem(SITE_KEY);
+  },
+};
 
 export const tokenStore = {
   getAccess(): string | null {
@@ -26,5 +40,6 @@ export const tokenStore = {
     if (!isBrowser()) return;
     window.localStorage.removeItem(ACCESS_KEY);
     window.localStorage.removeItem(REFRESH_KEY);
+    window.localStorage.removeItem(SITE_KEY);
   },
 };

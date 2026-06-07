@@ -9,11 +9,15 @@
   },
   "vars": {
     "ENVIRONMENT": "development",
-    "FRONTEND_URL": "http://localhost:3000"
+    "FRONTEND_URL": "http://localhost:3000",
+    // R2 (non-secret): account id + bucket. S3 endpoint is derived as
+    // https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com. Keys are secrets (below).
+    "R2_ACCOUNT_ID": "718e3f9a2c031cde8a52fa9cc16b696f",
+    "R2_BUCKET": "construction"
   }
   // Secrets (set via `wrangler secret put` in prod, `.dev.vars` locally):
-  //   DATABASE_URL, JWT_SECRET
+  //   DATABASE_URL, JWT_SECRET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+  // Files use R2 presigned URLs (no proxy through the Worker) — see common/r2.
   // Bindings added in later phases:
-  //   r2_buckets   -> file storage (R2)
   //   queues        -> PDF/Excel/image background jobs
 }

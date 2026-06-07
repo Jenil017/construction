@@ -2,3 +2,9 @@
 # The /health endpoint runs without these; DB-backed routes need DATABASE_URL.
 DATABASE_URL="postgresql://user:password@host.neon.tech/dbname?sslmode=require"
 JWT_SECRET="change-me-in-local-and-prod"
+
+# R2 file storage (DPR photos, receipts, ...). Account id + bucket live in
+# wrangler.jsonc vars; the S3 API token (Object Read & Write) goes here.
+# Create at: R2 -> Manage R2 API Tokens -> Create API token.
+R2_ACCESS_KEY_ID="your-r2-access-key-id"
+R2_SECRET_ACCESS_KEY="your-r2-secret-access-key"

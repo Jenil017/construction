@@ -4,10 +4,12 @@ import type { DbClient } from "../db";
 /**
  * Append an audit-trail row (see docs/architecter.md "Audit Architecture").
  * Callers must never pass secrets or sensitive salary/payment data in
- * before/after — strip password hashes etc. before calling.
+ * before/after — strip password hashes etc. before calling. `siteId` is the
+ * tenant key for site-scoped events and is null for account-level events
+ * (login/logout).
  */
 export interface AuditEntry {
-  companyId: string;
+  siteId?: string | null;
   actorUserId?: string | null;
   module: string;
   action: string;
@@ -22,7 +24,7 @@ export interface AuditEntry {
 
 export async function writeAudit(db: DbClient, entry: AuditEntry): Promise<void> {
   await db.insert(auditLogs).values({
-    companyId: entry.companyId,
+    siteId: entry.siteId ?? null,
     actorUserId: entry.actorUserId ?? null,
     module: entry.module,
     action: entry.action,

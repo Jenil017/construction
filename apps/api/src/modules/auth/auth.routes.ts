@@ -11,13 +11,13 @@ import {
   rotateRefreshToken,
   signAccessToken,
 } from "../../common/auth";
-import type { AuthContext } from "../../common/auth";
 import { getDb } from "../../common/db";
+import type { DbClient } from "../../common/db";
 import { AuthenticationError, InvalidCredentialsError } from "../../common/errors";
 import { getRequestMeta } from "../../common/http/request-meta";
 import { requireAuth } from "../../common/middleware/require-auth";
 import { rateLimit } from "../../common/rate-limit";
-import { type UserAccess, loadUserAccess } from "../../common/rbac";
+import { loadUserSites } from "../../common/rbac";
 import type { Env } from "../../env";
 import {
   authUserSchema,
@@ -34,28 +34,18 @@ interface UserRow {
   id: string;
   email: string;
   name: string;
-  companyId: string;
+  isOwner: boolean;
 }
 
-function toAuthUser(user: UserRow, access: UserAccess): AuthContext {
-  return {
-    userId: user.id,
-    companyId: user.companyId,
-    email: user.email,
-    name: user.name,
-    roles: access.roles,
-    permissions: access.permissions,
-  };
-}
-
-function userPayload(user: UserRow, access: UserAccess) {
+/** Build the public user payload (profile + the sites they can access). */
+async function userPayload(db: DbClient, user: UserRow) {
+  const sites = await loadUserSites(db, user.id);
   return {
     id: user.id,
     email: user.email,
     name: user.name,
-    companyId: user.companyId,
-    roles: access.roles,
-    permissions: access.permissions,
+    isAppOwner: user.isOwner,
+    sites,
   };
 }
 
@@ -64,7 +54,8 @@ const loginRoute = createRoute({
   path: "/auth/login",
   tags: ["Auth"],
   summary: "Sign in with email and password",
-  description: "Returns a short-lived access token and a rotating refresh token.",
+  description:
+    "Returns a short-lived access token, a rotating refresh token, and accessible sites.",
   middleware: [rateLimit({ bucket: "login", limit: 10, windowMs: 60_000 })] as const,
   request: {
     body: { content: { "application/json": { schema: loginBodySchema } }, required: true },
@@ -101,21 +92,15 @@ authRoutes.openapi(loginRoute, async (c) => {
   if (!user || user.status !== "active") throw new InvalidCredentialsError();
   if (!(await verifyPassword(password, user.passwordHash))) throw new InvalidCredentialsError();
 
-  const access = await loadUserAccess(db, user.id, user.companyId);
-  const accessToken = await signAccessToken(
-    { userId: user.id, companyId: user.companyId },
-    c.env.JWT_SECRET,
-  );
+  const accessToken = await signAccessToken({ userId: user.id }, c.env.JWT_SECRET);
 
   const refresh = await db.transaction(async (tx) => {
     await tx.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
     const issued = await issueRefreshToken(tx, {
       userId: user.id,
-      companyId: user.companyId,
       meta: { userAgent: meta.userAgent, ip: meta.ip },
     });
     await writeAudit(tx, {
-      companyId: user.companyId,
       actorUserId: user.id,
       module: "auth",
       action: "login",
@@ -136,7 +121,7 @@ authRoutes.openapi(loginRoute, async (c) => {
         refreshToken: refresh.token,
         tokenType: "Bearer" as const,
         expiresIn: ACCESS_TOKEN_TTL_SECONDS,
-        user: userPayload(user, access),
+        user: await userPayload(db, user),
       },
     },
     200,
@@ -185,11 +170,7 @@ authRoutes.openapi(refreshRoute, async (c) => {
     throw new AuthenticationError("Your account is no longer active. Please contact your admin.");
   }
 
-  const access = await loadUserAccess(db, user.id, user.companyId);
-  const accessToken = await signAccessToken(
-    { userId: user.id, companyId: user.companyId },
-    c.env.JWT_SECRET,
-  );
+  const accessToken = await signAccessToken({ userId: user.id }, c.env.JWT_SECRET);
 
   return c.json(
     {
@@ -199,7 +180,7 @@ authRoutes.openapi(refreshRoute, async (c) => {
         refreshToken: rotated.token,
         tokenType: "Bearer" as const,
         expiresIn: ACCESS_TOKEN_TTL_SECONDS,
-        user: userPayload(user, access),
+        user: await userPayload(db, user),
       },
     },
     200,
@@ -231,7 +212,6 @@ authRoutes.openapi(logoutRoute, async (c) => {
   await revokeRefreshToken(db, refreshToken);
   if (owner) {
     await writeAudit(db, {
-      companyId: owner.companyId,
       actorUserId: owner.userId,
       module: "auth",
       action: "logout",
@@ -250,7 +230,7 @@ const meRoute = createRoute({
   method: "get",
   path: "/auth/me",
   tags: ["Auth"],
-  summary: "Current user, roles, and permissions",
+  summary: "Current user and accessible sites",
   middleware: [requireAuth] as const,
   responses: {
     200: {
@@ -264,8 +244,10 @@ const meRoute = createRoute({
   },
 });
 
-authRoutes.openapi(meRoute, (c) => {
+authRoutes.openapi(meRoute, async (c) => {
   const auth = c.get("auth");
+  const db = getDb(c);
+  const sites = await loadUserSites(db, auth.userId);
   return c.json(
     {
       success: true as const,
@@ -273,9 +255,8 @@ authRoutes.openapi(meRoute, (c) => {
         id: auth.userId,
         email: auth.email,
         name: auth.name,
-        companyId: auth.companyId,
-        roles: auth.roles,
-        permissions: auth.permissions,
+        isAppOwner: auth.isAppOwner,
+        sites,
       },
     },
     200,

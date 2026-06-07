@@ -2,11 +2,12 @@
 
 import { useAuth } from "@/lib/auth/auth-context";
 import { cn } from "@/lib/utils";
-import { HardHat, Menu, X } from "lucide-react";
+import { HardHat, MapPinOff, Menu, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { NAV_ITEMS, type NavItem, SETTINGS_ITEMS } from "./nav-items";
+import { SiteSwitcher } from "./site-switcher";
 import { UserMenu } from "./user-menu";
 
 function isActive(pathname: string, href: string): boolean {
@@ -20,11 +21,13 @@ function isActive(pathname: string, href: string): boolean {
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { can } = useAuth();
+  const { can, user, activeSite } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const mainItems = NAV_ITEMS.filter((i) => can(i.module, i.action));
-  const settingsItems = SETTINGS_ITEMS.filter((i) => can(i.module, i.action));
+  const settingsItems = SETTINGS_ITEMS.filter(
+    (i) => (!i.ownerOnly || user?.isAppOwner) && can(i.module, i.action),
+  );
 
   // Close the drawer when the route changes (pathname is the intended trigger).
   // biome-ignore lint/correctness/useExhaustiveDependencies: run on route change
@@ -84,23 +87,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-background">
       {/* Top bar */}
-      <header className="sticky top-0 z-30 flex h-14 items-center gap-1 border-b bg-card px-2 sm:px-4">
+      <header className="sticky top-0 z-30 flex h-14 items-center gap-1 border-b border-sidebar-hover bg-sidebar px-2 text-sidebar-foreground sm:px-4">
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
           aria-label="Open menu"
           aria-expanded={mobileOpen}
-          className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent md:hidden"
+          className="rounded-md p-2 text-sidebar-muted transition-colors hover:bg-sidebar-hover hover:text-sidebar-foreground md:hidden"
         >
           <Menu className="size-5" />
         </button>
 
-        <Link href="/dashboard" className="flex items-center gap-2 px-1 font-semibold">
-          <span className="flex size-7 items-center justify-center rounded-md bg-sidebar text-sidebar-foreground">
+        <Link
+          href="/dashboard"
+          className="flex items-center gap-2 px-1 font-semibold text-sidebar-foreground"
+        >
+          <span className="flex size-7 items-center justify-center rounded-md bg-sidebar-hover text-sidebar-foreground">
             <HardHat className="size-4" />
           </span>
           <span className="hidden sm:inline">Construction ERP</span>
         </Link>
+
+        <div className="mx-1 h-6 w-px bg-sidebar-hover" />
+        <SiteSwitcher />
 
         <div className="ml-auto">
           <UserMenu />
@@ -113,7 +122,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {navContent()}
         </aside>
 
-        <main className="flex-1 p-4 md:p-6">{children}</main>
+        <main className="flex-1 p-4 md:p-6">
+          {activeSite ? (
+            children
+          ) : (
+            <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center text-muted-foreground">
+              <MapPinOff className="size-8" />
+              <p className="text-sm">
+                You haven't been assigned to any site yet.
+                <br />
+                Please contact your administrator.
+              </p>
+            </div>
+          )}
+        </main>
       </div>
 
       {/* Mobile drawer (slide-in) */}

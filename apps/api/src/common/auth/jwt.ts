@@ -4,19 +4,19 @@ import { AuthenticationError, TokenExpiredError } from "../errors";
 
 /**
  * Short-lived JWT access tokens (HS256 via hono/jwt + Web Crypto). The token
- * carries only the subject + tenant; permissions are loaded fresh from the DB on
- * each request (see common/rbac), so a permission change takes effect within one
+ * carries only the subject (user id) — the active site comes from the `X-Site-Id`
+ * header and permissions are loaded fresh from the DB on each request (see
+ * common/rbac), so a permission or site change takes effect within one
  * access-token lifetime without embedding a large claim set.
  */
 export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 
 export interface AccessTokenClaims {
   sub: string; // user id
-  companyId: string;
 }
 
 export async function signAccessToken(
-  payload: { userId: string; companyId: string },
+  payload: { userId: string },
   secret: string,
   ttlSeconds: number = ACCESS_TOKEN_TTL_SECONDS,
 ): Promise<string> {
@@ -24,7 +24,6 @@ export async function signAccessToken(
   return sign(
     {
       sub: payload.userId,
-      companyId: payload.companyId,
       type: "access",
       iat: now,
       exp: now + ttlSeconds,
@@ -44,9 +43,8 @@ export async function verifyAccessToken(token: string, secret: string): Promise<
   }
 
   const sub = payload.sub;
-  const companyId = payload.companyId;
-  if (payload.type !== "access" || typeof sub !== "string" || typeof companyId !== "string") {
+  if (payload.type !== "access" || typeof sub !== "string") {
     throw new AuthenticationError("Your session is invalid. Please sign in again.");
   }
-  return { sub, companyId };
+  return { sub };
 }

@@ -13,6 +13,12 @@ export interface Env {
     FRONTEND_URL: string;
     DATABASE_URL: string;
     JWT_SECRET: string;
+    // Cloudflare R2 (S3 API) for file storage — see common/r2. Account id +
+    // bucket are non-secret vars (wrangler.jsonc); keys are secrets (.dev.vars).
+    R2_ACCOUNT_ID: string;
+    R2_BUCKET: string;
+    R2_ACCESS_KEY_ID: string;
+    R2_SECRET_ACCESS_KEY: string;
   };
   Variables: {
     requestId: string;

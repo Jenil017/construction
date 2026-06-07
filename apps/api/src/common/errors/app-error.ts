@@ -64,6 +64,12 @@ export class AuthorizationError extends AppError {
   }
 }
 
+export class SiteAccessError extends AppError {
+  constructor(message = "You no longer have access to this site. Please pick another.") {
+    super({ code: ERROR_CODES.SITE_ACCESS_REVOKED, message, status: 403 });
+  }
+}
+
 export class NotFoundError extends AppError {
   constructor(message = "The requested resource was not found.") {
     super({ code: ERROR_CODES.NOT_FOUND, message, status: 404 });

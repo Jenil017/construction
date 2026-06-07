@@ -2,7 +2,9 @@
 
 This plan converts the finalized ERP stack into practical delivery phases.
 
-> **Progress:** Phase 0 ✅ · Phase 1 ✅ (2026-06-06) · Phase 2 ✅ (2026-06-06) · Phase 3 ⏳ next. See `docs/progress.md` for the detailed log.
+> **Progress:** Phase 0 ✅ · Phase 1 ✅ (2026-06-06) · Phase 2 ✅ (2026-06-06) · Phase 3 ✅ (2026-06-07) · **Refactor: Site-as-tenant ✅ (2026-06-07)** · Phase 4 ✅ (2026-06-07) · Phase 5 ⏳ next. See `docs/progress.md` for the detailed log.
+>
+> **Model change (2026-06-07):** Company and Project were removed. **Site is now the top-level tenant boundary** — an owner holds many sites, each user has per-site, per-module access (read / read+write), and data is scoped to the active site (chosen via an `X-Site-Id` header / site switcher). References to "Company" / "Project" / company-wide "roles" in the phases below are superseded by the site model; treat `siteId` as the tenant key for Phase 4+.
 
 ## Phase 0: Project Setup And Documentation — ✅ Completed
 
@@ -69,41 +71,43 @@ Deliverables:
 - Role management
 - Module permission checks
 
-## Phase 3: Company, Project, And Site Setup
+## Phase 3: Company, Project, And Site Setup — ✅ Completed (2026-06-07)
 
 Goals:
 
-- Create company/tenant model.
-- Create projects module.
-- Create sites module.
-- Assign users to projects/sites.
-- Add table-first frontend screens.
+- Create company/tenant model. ✅ (company profile `GET/PATCH /company`)
+- Create projects module. ✅
+- Create sites module. ✅
+- Assign users to projects/sites. ✅ (site-level via `site_assignments`)
+- Add table-first frontend screens. ✅
 
 Deliverables:
 
-- Company schema
-- Project schema
-- Site schema
-- Project and site APIs
-- Project and site frontend screens
+- Company schema ✅ (from Phase 1; profile API added)
+- Project schema ✅ (`projects`)
+- Site schema ✅ (`sites` + `site_assignments`)
+- Project and site APIs ✅ (+ company profile API)
+- Project and site frontend screens ✅ (+ company settings screen)
 
-## Phase 4: DPR Module
+Note: `site`/`own` scope **enforcement** uses the `site_assignments` data delivered here but is wired into the operational modules from Phase 4 onward (nothing to row-filter until DPR/attendance exist). Migration `0002` applied to Neon on 2026-06-07.
+
+## Phase 4: DPR Module — ✅ Completed (2026-06-07)
 
 Goals:
 
-- Build Daily Progress Report module.
-- Support photos through signed upload URLs.
-- Store DPR file metadata in database.
-- Support mobile-friendly DPR entry.
-- Add DPR list, detail, create, and edit screens.
+- Build Daily Progress Report module. ✅ (site-scoped CRUD + approval)
+- Support photos through signed upload URLs. ✅ (R2 presigned PUT/GET via aws4fetch; verified end-to-end via the API — browser uploads need a bucket CORS policy set in the dashboard)
+- Store DPR file metadata in database. ✅ (`dpr_photos`)
+- Support mobile-friendly DPR entry. ✅ (single sheet; camera capture input)
+- Add DPR list, detail, create, and edit screens. ✅
 
 Deliverables:
 
-- DPR schema
-- DPR APIs
-- DPR frontend screens
-- DPR photo upload flow
-- DPR report export job
+- DPR schema ✅ (`dpr` + `dpr_photos`, migration `0001`)
+- DPR APIs ✅ (list/create/get/update/delete/approve + photo upload-url/confirm/delete)
+- DPR frontend screens ✅ (list + filters, create/edit modal, detail modal with photos)
+- DPR photo upload flow ✅ (presigned direct-to-R2; verified 8/8 via the API — browser PUT needs bucket CORS)
+- DPR report export job ⏳ deferred to **Phase 8** (needs Cloudflare Queues)
 
 ## Phase 5: Inventory Module
 

@@ -1,9 +1,15 @@
 "use client";
 
 import { apiFetch } from "@/lib/api-client";
-import type { AuthRole } from "@/lib/auth/auth-context";
+import type { AccessLevel, RbacModule } from "@construction-erp/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+export interface ModulePermission {
+  module: RbacModule;
+  level: AccessLevel;
+}
+
+/** A member of the active site (the user + their per-module access here). */
 export interface UserRow {
   id: string;
   email: string;
@@ -12,7 +18,7 @@ export interface UserRow {
   status: string;
   lastLoginAt: string | null;
   createdAt: string;
-  roles: AuthRole[];
+  permissions: ModulePermission[];
 }
 
 export interface UserListParams {
@@ -23,9 +29,9 @@ export interface UserListParams {
 export interface CreateUserInput {
   name: string;
   email: string;
-  password: string;
+  password?: string;
   phone?: string;
-  roleIds: string[];
+  permissions: ModulePermission[];
 }
 
 export interface UpdateUserInput {
@@ -33,7 +39,7 @@ export interface UpdateUserInput {
   phone?: string | null;
   status?: "active" | "disabled";
   password?: string;
-  roleIds?: string[];
+  permissions?: ModulePermission[];
 }
 
 const USERS_KEY = ["users"] as const;
@@ -72,7 +78,7 @@ export function useDeleteUser() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      apiFetch<{ id: string; deleted: boolean }>(`/users/${id}`, { method: "DELETE" }),
+      apiFetch<{ id: string; removed: boolean }>(`/users/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: USERS_KEY }),
   });
 }

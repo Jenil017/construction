@@ -1,13 +1,17 @@
 /**
- * Barrel for all Drizzle tables. Module schemas (projects, sites, dpr, inventory,
- * attendance, salary, expenses, purchases, suppliers, ...) are added here as each
- * phase lands. Drizzle Kit reads this file (see drizzle.config.ts).
+ * Barrel for all Drizzle tables. Module schemas (dpr, inventory, attendance,
+ * salary, expenses, purchases, suppliers, ...) are added here as each phase
+ * lands. Drizzle Kit reads this file (see drizzle.config.ts).
+ *
+ * Site is the top-level tenant boundary: Site → members + {DPR, attendance,
+ * inventory, expenses, purchases, ...}. Every business table carries `siteId`.
  */
 export * from "./_shared";
-export * from "./companies";
 export * from "./audit-logs";
 export * from "./users";
-export * from "./roles";
-export * from "./role-permissions";
-export * from "./user-roles";
 export * from "./refresh-tokens";
+export * from "./sites";
+export * from "./site-members";
+export * from "./site-member-permissions";
+export * from "./dpr";
+export * from "./dpr-photos";

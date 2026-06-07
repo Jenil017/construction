@@ -29,9 +29,9 @@ Browser/Mobile → Next.js (Vercel) → Hono.js API (Cloudflare Workers)
 
 Three cross-cutting concerns shape almost every feature and span multiple files — internalize them before writing code:
 
-1. **Multi-tenancy.** Every business table carries a company/tenant id. *Every* query must filter by tenant unless the endpoint is explicitly platform-level. Hierarchy: `Company → Projects → Sites → {DPR, Attendance, Inventory, Expenses, Purchases}`.
-2. **Permission-based RBAC (not role-name checks).** A permission is `{ module, action, scope }` where action ∈ `view|create|update|delete|approve|export` and scope ∈ `company|site|own`. The backend must check permission before *every* protected operation. The frontend hides disallowed nav/buttons but is **never** the security boundary — backend checks are always mandatory.
-3. **Files never proxy through the API.** Uploads use R2 signed URLs: client requests URL → backend validates RBAC + file type/size → client uploads directly to R2 → client confirms → backend stores metadata. DB holds metadata/references; R2 holds bytes.
+1. **Multi-tenancy (Site = tenant boundary).** Every business table carries a `siteId`. *Every* query must filter by the active site unless the endpoint is explicitly account-level (auth/site list/site create). Hierarchy: `Site → {members, DPR, Attendance, Inventory, Expenses, Purchases, ...}`. An **owner** (`users.is_owner`) holds many sites (`sites.owner_user_id`); the active site is chosen by the client via the **`X-Site-Id` header**. *(Company and Project were removed on 2026-06-07 — see `docs/progress.md`.)*
+2. **Permission-based RBAC (not role-name checks).** A permission is `{ module, action }` (action ∈ `view|create|update|delete|approve|export`). Access is **per-user, per-site**: each `(member, module)` stores one `access_level` (`read` → `view`; `read_write` → all actions), expanded to permissions at load time. The **site owner** has implicit full access to sites they own. The backend must check permission before *every* protected operation; the frontend hides disallowed nav/buttons but is **never** the security boundary.
+3. **Files never proxy through the API.** Uploads use R2 signed URLs: client requests URL → backend validates RBAC + file type/size → client uploads directly to R2 → client confirms → backend stores metadata. DB holds metadata/references; R2 holds bytes. Implemented in `apps/api/src/common/r2` (presigned PUT/GET via `aws4fetch`); DPR photos (`dpr_photos`) are the first consumer. R2 config: `R2_ACCOUNT_ID`/`R2_BUCKET` (vars) + `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` (secrets); the bucket needs a CORS policy allowing browser `PUT`/`GET`.
 
 ## Backend conventions (Hono on Workers)
 
@@ -62,22 +62,23 @@ Three cross-cutting concerns shape almost every feature and span multiple files 
 
 ## Auth flow (Phase 2 — implemented)
 
-Custom email/password auth (no OAuth, no public signup — decided with the product owner). The first company + admin + default roles come from `pnpm db:seed`; the admin provisions everyone else via the Users module with module-wise permissions.
+Custom email/password auth (no OAuth, no public signup — decided with the product owner). The first **owner** (`admin@demo.test`) + sample sites + a sample member come from `pnpm db:seed`; the owner provisions everyone else per-site via the Users module with module-wise read/read-write access.
 
-- **Tokens:** sign-in issues a short-lived JWT **access token** (15 min, HS256 via `hono/jwt`, secret `JWT_SECRET`) + an opaque **refresh token**. The DB (`refresh_tokens`) is the refresh token's source of truth — only its SHA-256 hash is stored. Refresh tokens **rotate on use**; replaying a rotated token triggers **family-wide revocation** (`REFRESH_TOKEN_REUSED`). Logout revokes the active token. The web client keeps both tokens in `localStorage`; `apiFetch` attaches the Bearer header and does a single-flight refresh on `TOKEN_EXPIRED`.
+- **Tokens:** sign-in issues a short-lived JWT **access token** (15 min, HS256 via `hono/jwt`, secret `JWT_SECRET`; carries only `sub`) + an opaque **refresh token**. The DB (`refresh_tokens`) is the refresh token's source of truth — only its SHA-256 hash is stored. Refresh tokens **rotate on use**; replaying a rotated token triggers **family-wide revocation** (`REFRESH_TOKEN_REUSED`). Logout revokes the active token. The web client keeps both tokens in `localStorage` (+ the active `erp.activeSiteId`); `apiFetch` attaches the Bearer header and `X-Site-Id`, and does a single-flight refresh on `TOKEN_EXPIRED`.
 - **Passwords:** PBKDF2 via Web Crypto in `packages/shared/src/crypto` (`hashPassword`/`verifyPassword`) — isomorphic (Workers/Node/browser), shared by the API and the seed. Never bcrypt/argon2 (no Workers bindings).
-- **RBAC:** permission = `{ module, action, scope }`. Roles bundle permissions (`role_permissions`); users hold roles (`user_roles`). Default templates live in `packages/shared/src/rbac/role-templates.ts` (Owner = all). On each protected request, `requireAuth` loads the user's flattened permissions from the DB (one indexed join) and sets `c.var.auth`; `requirePermission(module, action)` gates the route. Scope (`site`/`own`) row-filtering is stored now but enforced from Phase 3+ once sites exist.
-- **Protecting a route:** add middleware to the OpenAPI route definition —
-  `createRoute({ ..., middleware: [requireAuth, requirePermission("users", "create")] as const })`.
-  Read the principal in the handler via `c.get("auth")` (`{ userId, companyId, email, name, roles, permissions }`). Always filter queries by `auth.companyId`.
+- **RBAC (per-site):** permission = `{ module, action }`. There is **no role library** — a user's access on a site is `site_members` → `site_member_permissions` (`access_level` per module). `requireAuth` reads `X-Site-Id`, resolves the user's access via `loadUserSiteAccess` (owner → implicit full; member → levels expanded by `ACTIONS_FOR_LEVEL`), and sets `c.var.auth`. `requirePermission(module, action)` gates the route and short-circuits for the site owner. `loadUserSites` powers the `/auth/me` + login `sites[]` (for the switcher).
+- **Protecting a route:**
+  - **Site-scoped** (most routes): `middleware: [requireAuth, requireSiteContext, requirePermission("users", "create")] as const`. `requireSiteContext` → 400 if no `X-Site-Id`, 403 `SITE_ACCESS_REVOKED` if the sent site isn't accessible. Always filter queries by `auth.siteId`.
+  - **Account-level:** `requireAuth` only (e.g. `/auth/me`, `GET /sites`). Site **creation** uses `[requireAuth, requireOwner]` (owner-only).
+  - Read the principal via `c.get("auth")` (`{ userId, siteId, email, name, isOwner, isAppOwner, permissions }`).
 - **DB access in handlers:** `getDb(c)` (lazy, per-request Neon Pool). Multi-table writes use `db.transaction(...)`; service helpers accept `DbClient` so they compose inside a tx. Audit mutations with `writeAudit(db, {...})` (never log passwords/tokens).
 - **Rate limiting:** best-effort in-isolate limiter on login/refresh today; KV/Durable-Object-backed limiting is Phase 9. OAuth callbacks/signed-URL/export limits land with those phases.
-- **Frontend:** `AuthProvider`/`useAuth` (`apps/web/src/lib/auth`) expose `user`, `login`, `logout`, and `can(module, action)`; `AuthGuard` protects the app shell; nav and action buttons are permission-filtered (the backend is still the security boundary).
+- **Frontend:** `AuthProvider`/`useAuth` (`apps/web/src/lib/auth`) expose `user` (`{ …, isAppOwner, sites[] }`), `activeSite`, `login`, `logout`, `switchSite(id)`, and a site-aware `can(module, action)` (owner → always true). `SiteSwitcher` (top bar) sets `erp.activeSiteId` and clears the query cache on switch. `AuthGuard` protects the app shell; nav/buttons are permission-filtered and Sites is owner-only (the backend is still the security boundary).
 
 ## Build order
 
 Follow `docs/plan.md` phases in order — each builds on the last:
-**Phase 1 Foundation — DONE** (pnpm + Turborepo monorepo, both apps, DB/Drizzle, Pino logging, response/error infra, `/health`, Swagger UI) → **2 Auth & RBAC — DONE** (custom email/password auth, JWT access + rotating refresh tokens with reuse detection, permission-based RBAC, seeded admin, Users/Roles APIs + admin UI) → 3 Company/Project/Site → 4 DPR → 5 Inventory → 6 Attendance & Salary → 7 Expenses/Purchases/Suppliers → 8 Reports & Queues → 9 Perf/Security/Production. Per-phase verification: TS typecheck, tests where practical, API route tests for key endpoints, migration verification, Swagger check, manual smoke test of the main flow.
+**Phase 1 Foundation — DONE** (pnpm + Turborepo monorepo, both apps, DB/Drizzle, Pino logging, response/error infra, `/health`, Swagger UI) → **2 Auth & RBAC — DONE** (custom email/password auth, JWT access + rotating refresh tokens with reuse detection, permission-based RBAC, seeded admin, Users/Roles APIs + admin UI) → **3 Company/Project/Site — DONE, then refactored** to **Site-as-tenant** (2026-06-07): Company & Project removed; Site is the top-level boundary with per-user, per-site read/read-write access + a site switcher; `sites`/`users` (per-site members) APIs + table-first UI; schema rebuilt as migration `0000` → **4 DPR — DONE** (site-scoped Daily Progress Reports with draft→submitted→approved workflow + R2 presigned-URL photo uploads via `aws4fetch`; migration `0001`) → 5 Inventory → 6 Attendance & Salary → 7 Expenses/Purchases/Suppliers → 8 Reports & Queues → 9 Perf/Security/Production. Per-phase verification: TS typecheck, tests where practical, API route tests for key endpoints, migration verification, Swagger check, manual smoke test of the main flow.
 
 ## After every feature or phase (definition of done)
 
@@ -111,7 +112,7 @@ pnpm workspaces + Turborepo. Internal packages are consumed as **TypeScript sour
 ```
 apps/web    Next.js 15 (App Router, Tailwind v4, shadcn/ui, TanStack Query) — Vercel
 apps/api    Hono on Cloudflare Workers (@hono/zod-openapi + Swagger UI, Pino) — entry src/index.ts
-packages/shared             response envelope, ERROR_CODES, RBAC constants + role templates, pagination, isomorphic crypto (PBKDF2/token hashing) — used by BOTH apps
+packages/shared             response envelope, ERROR_CODES, RBAC constants (modules/actions/access-levels + level→actions expansion), pagination, isomorphic crypto (PBKDF2/token hashing) — used by BOTH apps
 packages/db                 Drizzle schema + Neon client + idempotent seed (src/seed.ts); tables added per phase to src/schema/
 packages/typescript-config  shared tsconfig bases (base / nextjs / workers)
 ```

@@ -1,13 +1,14 @@
-import { roles, userRoles, users } from "@construction-erp/db/schema";
+import { siteMemberPermissions, siteMembers, users } from "@construction-erp/db/schema";
 import {
-  OWNER_ROLE_SLUG,
+  type AccessLevel,
+  type RbacModule,
   apiErrorSchema,
   apiSuccessSchema,
   buildPaginationMeta,
   hashPassword,
 } from "@construction-erp/shared";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
-import { and, asc, count, desc, eq, ilike, inArray, isNull, ne, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNull, or } from "drizzle-orm";
 import { writeAudit } from "../../common/audit";
 import { revokeUserSessions } from "../../common/auth";
 import { type DbClient, getDb } from "../../common/db";
@@ -15,22 +16,22 @@ import { ConflictError, NotFoundError, ValidationError } from "../../common/erro
 import { getRequestMeta } from "../../common/http/request-meta";
 import { requireAuth } from "../../common/middleware/require-auth";
 import { requirePermission } from "../../common/middleware/require-permission";
+import { requireSiteContext } from "../../common/middleware/require-site-context";
 import type { Env } from "../../env";
 import {
   createUserBodySchema,
-  deleteUserResultSchema,
   listUsersQuerySchema,
+  memberSchema,
+  removeUserResultSchema,
   updateUserBodySchema,
   userIdParamSchema,
-  userSchema,
 } from "./users.schemas";
 
 export const userRoutes = new OpenAPIHono<Env>();
 
-interface RoleSummary {
-  id: string;
-  slug: string;
-  name: string;
+interface MemberPerm {
+  module: string;
+  level: AccessLevel;
 }
 
 interface UserRow {
@@ -43,7 +44,7 @@ interface UserRow {
   createdAt: Date;
 }
 
-function serializeUser(row: UserRow, roleList: RoleSummary[]) {
+function serializeMember(row: UserRow, permissions: MemberPerm[]) {
   return {
     id: row.id,
     email: row.email,
@@ -52,82 +53,45 @@ function serializeUser(row: UserRow, roleList: RoleSummary[]) {
     status: row.status,
     lastLoginAt: row.lastLoginAt ? row.lastLoginAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
-    roles: roleList,
+    permissions: permissions.map((p) => ({ module: p.module as RbacModule, level: p.level })),
   };
 }
 
-/** Roles for a set of users in one query (avoids N+1). */
-async function rolesByUser(
+/** The membership row id for (site, user), or null if not a member of the site. */
+async function findMembership(
   db: DbClient,
-  companyId: string,
-  userIds: string[],
-): Promise<Map<string, RoleSummary[]>> {
-  const map = new Map<string, RoleSummary[]>();
-  if (userIds.length === 0) return map;
+  siteId: string,
+  userId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ id: siteMembers.id })
+    .from(siteMembers)
+    .where(and(eq(siteMembers.siteId, siteId), eq(siteMembers.userId, userId)))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+/** Per-module levels for a set of memberships in one query (avoids N+1). */
+async function permsByMembership(
+  db: DbClient,
+  membershipIds: string[],
+): Promise<Map<string, MemberPerm[]>> {
+  const map = new Map<string, MemberPerm[]>();
+  if (membershipIds.length === 0) return map;
   const rows = await db
-    .select({ userId: userRoles.userId, id: roles.id, slug: roles.slug, name: roles.name })
-    .from(userRoles)
-    .innerJoin(roles, and(eq(roles.id, userRoles.roleId), isNull(roles.deletedAt)))
-    .where(and(eq(userRoles.companyId, companyId), inArray(userRoles.userId, userIds)));
+    .select({
+      siteMemberId: siteMemberPermissions.siteMemberId,
+      module: siteMemberPermissions.module,
+      level: siteMemberPermissions.accessLevel,
+    })
+    .from(siteMemberPermissions)
+    .where(inArray(siteMemberPermissions.siteMemberId, membershipIds));
   for (const row of rows) {
-    const list = map.get(row.userId) ?? [];
-    list.push({ id: row.id, slug: row.slug, name: row.name });
-    map.set(row.userId, list);
+    const list = map.get(row.siteMemberId) ?? [];
+    list.push({ module: row.module, level: row.level as AccessLevel });
+    map.set(row.siteMemberId, list);
   }
   return map;
-}
-
-/** Validate that every roleId belongs to the company; returns the deduped ids. */
-async function assertRolesValid(
-  db: DbClient,
-  companyId: string,
-  roleIds: string[],
-): Promise<string[]> {
-  const unique = [...new Set(roleIds)];
-  const found = await db
-    .select({ id: roles.id })
-    .from(roles)
-    .where(and(eq(roles.companyId, companyId), inArray(roles.id, unique), isNull(roles.deletedAt)));
-  const foundIds = new Set(found.map((r) => r.id));
-  if (unique.some((id) => !foundIds.has(id))) {
-    throw new ValidationError("One or more selected roles are invalid.");
-  }
-  return unique;
-}
-
-/** Throw if `targetUserId` is the only remaining active owner of the company. */
-async function assertNotLastOwner(
-  db: DbClient,
-  companyId: string,
-  targetUserId: string,
-): Promise<void> {
-  const [ownerRole] = await db
-    .select({ id: roles.id })
-    .from(roles)
-    .where(
-      and(eq(roles.companyId, companyId), eq(roles.slug, OWNER_ROLE_SLUG), isNull(roles.deletedAt)),
-    )
-    .limit(1);
-  if (!ownerRole) return;
-
-  const [targetHasOwner] = await db
-    .select({ id: userRoles.id })
-    .from(userRoles)
-    .where(and(eq(userRoles.userId, targetUserId), eq(userRoles.roleId, ownerRole.id)))
-    .limit(1);
-  if (!targetHasOwner) return;
-
-  const others = await db
-    .select({ id: users.id })
-    .from(userRoles)
-    .innerJoin(
-      users,
-      and(eq(users.id, userRoles.userId), isNull(users.deletedAt), eq(users.status, "active")),
-    )
-    .where(and(eq(userRoles.roleId, ownerRole.id), ne(userRoles.userId, targetUserId)));
-  if (others.length === 0) {
-    throw new ConflictError("You cannot disable or remove the last active owner.");
-  }
 }
 
 function sortColumn(sortBy?: string) {
@@ -145,14 +109,14 @@ const listUsersRoute = createRoute({
   method: "get",
   path: "/users",
   tags: ["Users"],
-  summary: "List users in the company",
-  description: "Permission: users:view. Paginated, filterable by status and search.",
-  middleware: [requireAuth, requirePermission("users", "view")] as const,
+  summary: "List members of the active site",
+  description: "Permission: users:view. Scoped to the active site (X-Site-Id).",
+  middleware: [requireAuth, requireSiteContext, requirePermission("users", "view")] as const,
   request: { query: listUsersQuerySchema },
   responses: {
     200: {
-      description: "A page of users",
-      content: { "application/json": { schema: apiSuccessSchema(z.array(userSchema)) } },
+      description: "A page of members",
+      content: { "application/json": { schema: apiSuccessSchema(z.array(memberSchema)) } },
     },
     401: {
       description: "Not authenticated",
@@ -169,8 +133,9 @@ userRoutes.openapi(listUsersRoute, async (c) => {
   const { page, pageSize, sortBy, sortOrder, search, status } = c.req.valid("query");
   const auth = c.get("auth");
   const db = getDb(c);
+  const siteId = auth.siteId as string;
 
-  const filters = [eq(users.companyId, auth.companyId), isNull(users.deletedAt)];
+  const filters = [eq(siteMembers.siteId, siteId), isNull(users.deletedAt)];
   if (status) filters.push(eq(users.status, status));
   if (search) {
     const pattern = `%${search}%`;
@@ -180,23 +145,36 @@ userRoutes.openapi(listUsersRoute, async (c) => {
   const whereClause = and(...filters);
   const orderBy = sortOrder === "asc" ? asc(sortColumn(sortBy)) : desc(sortColumn(sortBy));
 
-  const [totalRow] = await db.select({ value: count() }).from(users).where(whereClause);
+  const [totalRow] = await db
+    .select({ value: count() })
+    .from(siteMembers)
+    .innerJoin(users, eq(users.id, siteMembers.userId))
+    .where(whereClause);
   const total = totalRow?.value ?? 0;
 
   const rows = await db
-    .select()
-    .from(users)
+    .select({
+      membershipId: siteMembers.id,
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      phone: users.phone,
+      status: users.status,
+      lastLoginAt: users.lastLoginAt,
+      createdAt: users.createdAt,
+    })
+    .from(siteMembers)
+    .innerJoin(users, eq(users.id, siteMembers.userId))
     .where(whereClause)
     .orderBy(orderBy)
     .limit(pageSize)
     .offset((page - 1) * pageSize);
 
-  const roleMap = await rolesByUser(
+  const permMap = await permsByMembership(
     db,
-    auth.companyId,
-    rows.map((r) => r.id),
+    rows.map((r) => r.membershipId),
   );
-  const data = rows.map((row) => serializeUser(row, roleMap.get(row.id) ?? []));
+  const data = rows.map((row) => serializeMember(row, permMap.get(row.membershipId) ?? []));
 
   return c.json(
     { success: true as const, data, meta: buildPaginationMeta(page, pageSize, total) },
@@ -208,27 +186,25 @@ const createUserRoute = createRoute({
   method: "post",
   path: "/users",
   tags: ["Users"],
-  summary: "Create a user and assign roles",
-  description: "Permission: users:create.",
-  middleware: [requireAuth, requirePermission("users", "create")] as const,
+  summary: "Add a member to the active site",
+  description:
+    "Permission: users:create. Creates a new user (password required) or adds an existing " +
+    "user (by email) to this site, with the given per-module access.",
+  middleware: [requireAuth, requireSiteContext, requirePermission("users", "create")] as const,
   request: {
     body: { content: { "application/json": { schema: createUserBodySchema } }, required: true },
   },
   responses: {
     201: {
-      description: "User created",
-      content: { "application/json": { schema: apiSuccessSchema(userSchema) } },
-    },
-    401: {
-      description: "Not authenticated",
-      content: { "application/json": { schema: apiErrorSchema } },
+      description: "Member added",
+      content: { "application/json": { schema: apiSuccessSchema(memberSchema) } },
     },
     403: {
       description: "Permission denied",
       content: { "application/json": { schema: apiErrorSchema } },
     },
     409: {
-      description: "Email already in use",
+      description: "Already a member",
       content: { "application/json": { schema: apiErrorSchema } },
     },
   },
@@ -239,95 +215,86 @@ userRoutes.openapi(createUserRoute, async (c) => {
   const auth = c.get("auth");
   const db = getDb(c);
   const meta = getRequestMeta(c);
+  const siteId = auth.siteId as string;
   const email = body.email.trim().toLowerCase();
 
   const [existing] = await db
-    .select({ id: users.id })
+    .select()
     .from(users)
-    .where(eq(users.email, email))
+    .where(and(eq(users.email, email), isNull(users.deletedAt)))
     .limit(1);
-  if (existing) throw new ConflictError("A user with this email already exists.");
 
-  const roleIds = await assertRolesValid(db, auth.companyId, body.roleIds);
-  const passwordHash = await hashPassword(body.password);
+  if (existing) {
+    const already = await findMembership(db, siteId, existing.id);
+    if (already) throw new ConflictError("This user is already a member of this site.");
+  } else if (!body.password) {
+    throw new ValidationError("A password is required to create a new user.", {
+      fields: { password: "A password is required to create a new user." },
+    });
+  }
 
-  const created = await db.transaction(async (tx) => {
-    const [user] = await tx
-      .insert(users)
-      .values({
-        companyId: auth.companyId,
-        email,
-        passwordHash,
-        name: body.name,
-        phone: body.phone ?? null,
-        status: "active",
-      })
+  const passwordHash = existing ? null : await hashPassword(body.password as string);
+
+  const member = await db.transaction(async (tx) => {
+    let user = existing;
+    if (!user) {
+      const [created] = await tx
+        .insert(users)
+        .values({
+          email,
+          passwordHash: passwordHash as string,
+          name: body.name.trim(),
+          phone: body.phone ?? null,
+          isOwner: false,
+          status: "active",
+        })
+        .returning();
+      if (!created) throw new ConflictError("Could not create the user. Please try again.");
+      user = created;
+    }
+
+    const [membership] = await tx
+      .insert(siteMembers)
+      .values({ siteId, userId: user.id })
       .returning();
-    if (!user) throw new ConflictError("Could not create the user. Please try again.");
+    if (!membership) throw new ConflictError("Could not add the member. Please try again.");
 
-    await tx
-      .insert(userRoles)
-      .values(roleIds.map((roleId) => ({ userId: user.id, roleId, companyId: auth.companyId })));
+    await tx.insert(siteMemberPermissions).values(
+      body.permissions.map((p) => ({
+        siteMemberId: membership.id,
+        module: p.module,
+        accessLevel: p.level,
+      })),
+    );
 
     await writeAudit(tx, {
-      companyId: auth.companyId,
+      siteId,
       actorUserId: auth.userId,
       module: "users",
       action: "create",
-      entityType: "user",
+      entityType: "site_member",
       entityId: user.id,
-      after: { email, name: body.name, phone: body.phone ?? null, roleIds },
+      after: {
+        email: user.email,
+        name: user.name,
+        linkedExisting: !!existing,
+        permissions: body.permissions,
+      },
       ip: meta.ip,
       userAgent: meta.userAgent,
       requestId: meta.requestId,
     });
-    return user;
+
+    return { user, membershipId: membership.id };
   });
 
-  const roleMap = await rolesByUser(db, auth.companyId, [created.id]);
+  const permMap = await permsByMembership(db, [member.membershipId]);
   return c.json(
-    { success: true as const, data: serializeUser(created, roleMap.get(created.id) ?? []) },
+    {
+      success: true as const,
+      data: serializeMember(member.user, permMap.get(member.membershipId) ?? []),
+    },
     201,
-  );
-});
-
-const getUserRoute = createRoute({
-  method: "get",
-  path: "/users/{id}",
-  tags: ["Users"],
-  summary: "Get a user by id",
-  description: "Permission: users:view.",
-  middleware: [requireAuth, requirePermission("users", "view")] as const,
-  request: { params: userIdParamSchema },
-  responses: {
-    200: {
-      description: "The user",
-      content: { "application/json": { schema: apiSuccessSchema(userSchema) } },
-    },
-    403: {
-      description: "Permission denied",
-      content: { "application/json": { schema: apiErrorSchema } },
-    },
-    404: { description: "Not found", content: { "application/json": { schema: apiErrorSchema } } },
-  },
-});
-
-userRoutes.openapi(getUserRoute, async (c) => {
-  const { id } = c.req.valid("param");
-  const auth = c.get("auth");
-  const db = getDb(c);
-
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(and(eq(users.id, id), eq(users.companyId, auth.companyId), isNull(users.deletedAt)))
-    .limit(1);
-  if (!user) throw new NotFoundError("User not found.");
-
-  const roleMap = await rolesByUser(db, auth.companyId, [user.id]);
-  return c.json(
-    { success: true as const, data: serializeUser(user, roleMap.get(user.id) ?? []) },
-    200,
   );
 });
 
@@ -335,17 +302,17 @@ const updateUserRoute = createRoute({
   method: "patch",
   path: "/users/{id}",
   tags: ["Users"],
-  summary: "Update a user (profile, status, roles, password)",
-  description: "Permission: users:update.",
-  middleware: [requireAuth, requirePermission("users", "update")] as const,
+  summary: "Update a member (profile, status, password, access)",
+  description: "Permission: users:update. Access changes apply to the active site only.",
+  middleware: [requireAuth, requireSiteContext, requirePermission("users", "update")] as const,
   request: {
     params: userIdParamSchema,
     body: { content: { "application/json": { schema: updateUserBodySchema } }, required: true },
   },
   responses: {
     200: {
-      description: "User updated",
-      content: { "application/json": { schema: apiSuccessSchema(userSchema) } },
+      description: "Member updated",
+      content: { "application/json": { schema: apiSuccessSchema(memberSchema) } },
     },
     403: {
       description: "Permission denied",
@@ -362,11 +329,15 @@ userRoutes.openapi(updateUserRoute, async (c) => {
   const auth = c.get("auth");
   const db = getDb(c);
   const meta = getRequestMeta(c);
+  const siteId = auth.siteId as string;
+
+  const membershipId = await findMembership(db, siteId, id);
+  if (!membershipId) throw new NotFoundError("This user is not a member of this site.");
 
   const [existing] = await db
     .select()
     .from(users)
-    .where(and(eq(users.id, id), eq(users.companyId, auth.companyId), isNull(users.deletedAt)))
+    .where(and(eq(users.id, id), isNull(users.deletedAt)))
     .limit(1);
   if (!existing) throw new NotFoundError("User not found.");
 
@@ -375,17 +346,8 @@ userRoutes.openapi(updateUserRoute, async (c) => {
     throw new ConflictError("You cannot disable your own account.");
   }
 
-  const roleIds = body.roleIds
-    ? await assertRolesValid(db, auth.companyId, body.roleIds)
-    : undefined;
-  // If this action removes the user's owner role or disables them, guard the last owner.
-  const willLoseOwner =
-    disabling ||
-    (roleIds !== undefined && !(await roleIdsIncludeOwner(db, auth.companyId, roleIds)));
-  if (willLoseOwner) await assertNotLastOwner(db, auth.companyId, id);
-
   const updates: Record<string, unknown> = {};
-  if (body.name !== undefined) updates.name = body.name;
+  if (body.name !== undefined) updates.name = body.name.trim();
   if (body.phone !== undefined) updates.phone = body.phone;
   if (body.status !== undefined) updates.status = body.status;
   if (body.password !== undefined) updates.passwordHash = await hashPassword(body.password);
@@ -394,27 +356,33 @@ userRoutes.openapi(updateUserRoute, async (c) => {
     if (Object.keys(updates).length > 0) {
       await tx.update(users).set(updates).where(eq(users.id, id));
     }
-    if (roleIds) {
-      await tx.delete(userRoles).where(eq(userRoles.userId, id));
+    if (body.permissions) {
       await tx
-        .insert(userRoles)
-        .values(roleIds.map((roleId) => ({ userId: id, roleId, companyId: auth.companyId })));
+        .delete(siteMemberPermissions)
+        .where(eq(siteMemberPermissions.siteMemberId, membershipId));
+      await tx.insert(siteMemberPermissions).values(
+        body.permissions.map((p) => ({
+          siteMemberId: membershipId,
+          module: p.module,
+          accessLevel: p.level,
+        })),
+      );
     }
     if (disabling) await revokeUserSessions(tx, id);
 
     await writeAudit(tx, {
-      companyId: auth.companyId,
+      siteId,
       actorUserId: auth.userId,
       module: "users",
       action: "update",
-      entityType: "user",
+      entityType: "site_member",
       entityId: id,
       before: { name: existing.name, phone: existing.phone, status: existing.status },
       after: {
         name: body.name ?? existing.name,
         phone: body.phone === undefined ? existing.phone : body.phone,
         status: body.status ?? existing.status,
-        ...(roleIds ? { roleIds } : {}),
+        ...(body.permissions ? { permissions: body.permissions } : {}),
         ...(body.password !== undefined ? { passwordChanged: true } : {}),
       },
       ip: meta.ip,
@@ -424,90 +392,66 @@ userRoutes.openapi(updateUserRoute, async (c) => {
   });
 
   const [updated] = await db.select().from(users).where(eq(users.id, id)).limit(1);
-  const target = updated ?? existing;
-  const roleMap = await rolesByUser(db, auth.companyId, [id]);
+  const permMap = await permsByMembership(db, [membershipId]);
   return c.json(
-    { success: true as const, data: serializeUser(target, roleMap.get(id) ?? []) },
+    {
+      success: true as const,
+      data: serializeMember(updated ?? existing, permMap.get(membershipId) ?? []),
+    },
     200,
   );
 });
 
-const deleteUserRoute = createRoute({
+const removeUserRoute = createRoute({
   method: "delete",
   path: "/users/{id}",
   tags: ["Users"],
-  summary: "Soft-delete a user",
-  description: "Permission: users:delete. Revokes the user's sessions.",
-  middleware: [requireAuth, requirePermission("users", "delete")] as const,
+  summary: "Remove a member from the active site",
+  description:
+    "Permission: users:delete. Removes the user's access to this site (not their account).",
+  middleware: [requireAuth, requireSiteContext, requirePermission("users", "delete")] as const,
   request: { params: userIdParamSchema },
   responses: {
     200: {
-      description: "User deleted",
-      content: { "application/json": { schema: apiSuccessSchema(deleteUserResultSchema) } },
+      description: "Member removed",
+      content: { "application/json": { schema: apiSuccessSchema(removeUserResultSchema) } },
     },
     403: {
       description: "Permission denied",
       content: { "application/json": { schema: apiErrorSchema } },
     },
     404: { description: "Not found", content: { "application/json": { schema: apiErrorSchema } } },
-    409: { description: "Conflict", content: { "application/json": { schema: apiErrorSchema } } },
   },
 });
 
-userRoutes.openapi(deleteUserRoute, async (c) => {
+userRoutes.openapi(removeUserRoute, async (c) => {
   const { id } = c.req.valid("param");
   const auth = c.get("auth");
   const db = getDb(c);
   const meta = getRequestMeta(c);
+  const siteId = auth.siteId as string;
 
-  if (id === auth.userId) throw new ConflictError("You cannot delete your own account.");
+  const membershipId = await findMembership(db, siteId, id);
+  if (!membershipId) throw new NotFoundError("This user is not a member of this site.");
 
-  const [existing] = await db
-    .select()
-    .from(users)
-    .where(and(eq(users.id, id), eq(users.companyId, auth.companyId), isNull(users.deletedAt)))
-    .limit(1);
-  if (!existing) throw new NotFoundError("User not found.");
-
-  await assertNotLastOwner(db, auth.companyId, id);
+  const [existing] = await db.select().from(users).where(eq(users.id, id)).limit(1);
 
   await db.transaction(async (tx) => {
-    await tx
-      .update(users)
-      .set({ deletedAt: new Date(), status: "disabled" })
-      .where(eq(users.id, id));
-    await revokeUserSessions(tx, id);
+    // Deleting the membership cascades its permissions (FK onDelete: cascade).
+    await tx.delete(siteMembers).where(eq(siteMembers.id, membershipId));
     await writeAudit(tx, {
-      companyId: auth.companyId,
+      siteId,
       actorUserId: auth.userId,
       module: "users",
       action: "delete",
-      entityType: "user",
+      entityType: "site_member",
       entityId: id,
-      before: { email: existing.email, name: existing.name, status: existing.status },
+      before: existing ? { email: existing.email, name: existing.name } : undefined,
       ip: meta.ip,
       userAgent: meta.userAgent,
       requestId: meta.requestId,
     });
   });
 
-  return c.json({ success: true as const, data: { id, deleted: true } }, 200);
+  return c.json({ success: true as const, data: { id, removed: true } }, 200);
 });
-
-/** True if the provided roleIds include the company's owner role. */
-async function roleIdsIncludeOwner(
-  db: DbClient,
-  companyId: string,
-  roleIds: string[],
-): Promise<boolean> {
-  if (roleIds.length === 0) return false;
-  const [ownerRole] = await db
-    .select({ id: roles.id })
-    .from(roles)
-    .where(
-      and(eq(roles.companyId, companyId), eq(roles.slug, OWNER_ROLE_SLUG), isNull(roles.deletedAt)),
-    )
-    .limit(1);
-  if (!ownerRole) return false;
-  return roleIds.includes(ownerRole.id);
-}
