@@ -41,13 +41,13 @@ export function Modal({ open, onClose, title, description, children, footer }: M
       <button
         type="button"
         aria-label="Close"
-        className="absolute inset-0 cursor-default bg-foreground/40 backdrop-blur-sm"
+        className="absolute inset-0 cursor-default bg-[#0b1220]/45 backdrop-blur-sm animate-fade-in"
         onClick={onClose}
       />
-      <div className="relative z-10 flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border bg-card shadow-lg sm:rounded-2xl">
-        <div className="flex items-start justify-between gap-4 border-b p-4">
+      <div className="relative z-10 flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-border/70 bg-card shadow-xl animate-pop-in sm:rounded-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-border/70 px-5 py-4">
           <div className="min-w-0">
-            <h2 className="font-semibold tracking-tight">{title}</h2>
+            <h2 className="text-base font-semibold tracking-tight">{title}</h2>
             {description ? (
               <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
             ) : null}
@@ -55,13 +55,17 @@ export function Modal({ open, onClose, title, description, children, footer }: M
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            className="-mr-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
           >
             <X className="size-4" />
           </button>
         </div>
-        <div className="overflow-y-auto p-4">{children}</div>
-        {footer ? <div className="flex justify-end gap-2 border-t p-4">{footer}</div> : null}
+        <div className="overflow-y-auto px-5 py-4">{children}</div>
+        {footer ? (
+          <div className="flex justify-end gap-2 border-t border-border/70 bg-muted/30 px-5 py-4">
+            {footer}
+          </div>
+        ) : null}
       </div>
     </div>
   );

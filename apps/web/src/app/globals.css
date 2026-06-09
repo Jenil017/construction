@@ -3,44 +3,48 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Construction ERP palette (light, enterprise SaaS).
- * Navy authority + teal accent on a readable white/slate base.
+ * Construction ERP — "industrial premium" theme.
+ * Ink-navy structure + saffron-amber accent on a warm neutral base.
+ * Typeface: Hanken Grotesk (UI) + IBM Plex Mono (figures).
  */
 :root {
-  --radius: 0.625rem;
+  --radius: 0.7rem;
 
-  --background: #f7f9fc; /* page background */
-  --foreground: #0f172a; /* primary text */
+  --background: #f6f6f4; /* warm off-white page */
+  --foreground: #16212e; /* ink */
   --card: #ffffff;
-  --card-foreground: #0f172a;
+  --card-foreground: #16212e;
   --popover: #ffffff;
-  --popover-foreground: #0f172a;
+  --popover-foreground: #16212e;
 
-  --primary: #2f578a; /* primary buttons */
+  --primary: #16243b; /* ink-navy — buttons, key actions */
   --primary-foreground: #ffffff;
-  --secondary: #eef2f8;
-  --secondary-foreground: #232f72;
-  --muted: #f1f5f9;
-  --muted-foreground: #64748b; /* secondary text */
-  --accent: #e8f6f4; /* teal-tinted hover/highlight */
-  --accent-foreground: #0f766e;
-  --destructive: #ef4444; /* danger */
-  --border: #e5eaf2;
-  --input: #e5eaf2;
-  --ring: #2563eb; /* bright action blue focus ring */
+  --primary-hover: #1f3354;
+  --secondary: #ecedf0;
+  --secondary-foreground: #1e293b;
+  --muted: #f0f0ee;
+  --muted-foreground: #6b7480; /* secondary text */
+  --accent: #fbf2e1; /* soft amber tint — hover surfaces */
+  --accent-foreground: #a55c06; /* deep amber text on the tint */
+  --destructive: #dc2f3f;
+  --border: #e7e5e0;
+  --input: #e3e1db;
+  --ring: #e0922f; /* saffron focus ring */
 
   /* Brand + sidebar + status */
-  --sidebar: #121358; /* primary dark navy */
-  --sidebar-hover: #232f72; /* secondary navy */
-  --sidebar-foreground: #e8ecf6;
-  --sidebar-muted: #9aa3cc;
-  --brand: #2f578a;
-  --teal: #36ada3; /* accent teal */
-  --action: #2563eb;
+  --sidebar: #101b2e; /* deep ink navy */
+  --sidebar-hover: #1b2c46;
+  --sidebar-foreground: #dde3ee;
+  --sidebar-muted: #8793a8;
+  --sidebar-active: #f3a951; /* saffron active text/indicator on navy */
+  --brand: #16243b;
+  --accent-solid: #e0922f; /* solid saffron */
+  --teal: #0d9488;
+  --action: #2f6fd8;
   --sky: #60a5fa;
-  --success: #10b981;
-  --warning: #f59e0b;
-  --danger: #ef4444;
+  --success: #15a06b;
+  --warning: #d98324;
+  --danger: #dc2f3f;
 }
 
 .dark {
@@ -73,12 +77,14 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-accent-solid: var(--accent-solid);
   --color-destructive: var(--destructive);
   --color-border: var(--border);
   --color-input: var(--input);
@@ -88,6 +94,7 @@
   --color-sidebar-hover: var(--sidebar-hover);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-active: var(--sidebar-active);
   --color-brand: var(--brand);
   --color-teal: var(--teal);
   --color-action: var(--action);
@@ -96,9 +103,22 @@
   --color-warning: var(--warning);
   --color-danger: var(--danger);
 
+  --font-sans: var(--font-hanken), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", monospace;
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* Soft, layered shadows for premium depth (applied app-wide). */
+  --shadow-2xs: 0 1px 2px 0 rgb(15 23 42 / 0.04);
+  --shadow-xs: 0 1px 2px 0 rgb(15 23 42 / 0.05);
+  --shadow-sm: 0 1px 2px 0 rgb(15 23 42 / 0.05), 0 1px 3px 0 rgb(15 23 42 / 0.06);
+  --shadow: 0 1px 2px 0 rgb(15 23 42 / 0.05), 0 2px 6px -1px rgb(15 23 42 / 0.07);
+  --shadow-md: 0 2px 4px -1px rgb(15 23 42 / 0.06), 0 6px 16px -3px rgb(15 23 42 / 0.09);
+  --shadow-lg: 0 10px 28px -6px rgb(15 23 42 / 0.13);
+  --shadow-xl: 0 18px 44px -10px rgb(15 23 42 / 0.18);
 }
 
 @layer base {
@@ -110,5 +130,82 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  /* Tighten display headings a touch for a more refined, editorial feel. */
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.015em;
+  }
+  ::selection {
+    background-color: color-mix(in srgb, var(--accent-solid) 28%, transparent);
+    color: var(--foreground);
+  }
+  /* Slim, unobtrusive scrollbars. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--foreground) 18%, transparent) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--foreground) 16%, transparent);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in srgb, var(--foreground) 28%, transparent);
+  }
+}
+
+@layer utilities {
+  /* Mono, tabular figures for amounts, stock, KPIs. */
+  .nums {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum";
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-fade-in {
+    animation: fade-in 0.18s ease-out both;
+  }
+  .animate-pop-in {
+    animation: pop-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-rise-in {
+    animation: rise-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 }

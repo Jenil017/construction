@@ -56,14 +56,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <Link
           href={item.href}
           onClick={onNavigate}
+          aria-current={active ? "page" : undefined}
           className={cn(
-            "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+            "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
             active
-              ? "bg-sidebar-hover text-sidebar-foreground"
-              : "text-sidebar-muted hover:bg-sidebar-hover/60 hover:text-sidebar-foreground",
+              ? "bg-sidebar-hover/70 font-semibold text-white before:absolute before:top-2 before:bottom-2 before:left-0 before:w-1 before:rounded-full before:bg-sidebar-active before:content-['']"
+              : "font-medium text-sidebar-muted hover:bg-sidebar-hover/50 hover:text-sidebar-foreground",
           )}
         >
-          <item.icon className="size-4 shrink-0" />
+          <item.icon
+            className={cn(
+              "size-[1.05rem] shrink-0 transition-colors",
+              active
+                ? "text-sidebar-active"
+                : "text-sidebar-muted group-hover:text-sidebar-foreground",
+            )}
+          />
           {item.label}
         </Link>
       </li>
@@ -87,7 +95,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-background">
       {/* Top bar */}
-      <header className="sticky top-0 z-30 flex h-14 items-center gap-1 border-b border-sidebar-hover bg-sidebar px-2 text-sidebar-foreground sm:px-4">
+      <header className="sticky top-0 z-30 flex h-14 items-center gap-1 border-b border-white/5 bg-sidebar px-2 text-sidebar-foreground sm:px-4">
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
@@ -100,9 +108,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <Link
           href="/dashboard"
-          className="flex items-center gap-2 px-1 font-semibold text-sidebar-foreground"
+          className="flex items-center gap-2.5 px-1 font-semibold tracking-tight text-sidebar-foreground"
         >
-          <span className="flex size-7 items-center justify-center rounded-md bg-sidebar-hover text-sidebar-foreground">
+          <span className="flex size-7 items-center justify-center rounded-md bg-accent-solid text-[#101b2e] shadow-sm">
             <HardHat className="size-4" />
           </span>
           <span className="hidden sm:inline">Construction ERP</span>
@@ -118,23 +126,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <div className="flex">
         {/* Desktop sidebar */}
-        <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-60 shrink-0 overflow-y-auto bg-sidebar p-3 md:block">
+        <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-60 shrink-0 overflow-y-auto border-r border-white/5 bg-[linear-gradient(180deg,#13223b_0%,#0e1828_100%)] p-3 md:block">
           {navContent()}
         </aside>
 
-        <main className="flex-1 p-4 md:p-6">
-          {activeSite ? (
-            children
-          ) : (
-            <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-              <MapPinOff className="size-8" />
-              <p className="text-sm">
-                You haven't been assigned to any site yet.
-                <br />
-                Please contact your administrator.
-              </p>
-            </div>
-          )}
+        <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
+          <div className="mx-auto w-full max-w-[1400px] animate-rise-in">
+            {activeSite ? (
+              children
+            ) : (
+              <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center text-muted-foreground">
+                <MapPinOff className="size-8" />
+                <p className="text-sm">
+                  You haven't been assigned to any site yet.
+                  <br />
+                  Please contact your administrator.
+                </p>
+              </div>
+            )}
+          </div>
         </main>
       </div>
 
@@ -157,13 +167,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         />
         <aside
           className={cn(
-            "absolute left-0 top-0 flex h-full w-72 max-w-[82%] flex-col overflow-y-auto bg-sidebar p-3 shadow-xl transition-transform duration-200 ease-out",
+            "absolute top-0 left-0 flex h-full w-72 max-w-[82%] flex-col overflow-y-auto bg-[linear-gradient(180deg,#13223b_0%,#0e1828_100%)] p-3 shadow-xl transition-transform duration-200 ease-out",
             mobileOpen ? "translate-x-0" : "-translate-x-full",
           )}
         >
           <div className="mb-3 flex items-center justify-between px-1">
-            <span className="flex items-center gap-2 font-semibold text-sidebar-foreground">
-              <span className="flex size-7 items-center justify-center rounded-md bg-sidebar-hover">
+            <span className="flex items-center gap-2.5 font-semibold tracking-tight text-sidebar-foreground">
+              <span className="flex size-7 items-center justify-center rounded-md bg-accent-solid text-[#101b2e] shadow-sm">
                 <HardHat className="size-4" />
               </span>
               Construction ERP

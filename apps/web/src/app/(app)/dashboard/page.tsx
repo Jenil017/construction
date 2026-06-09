@@ -1,54 +1,134 @@
+"use client";
+
 import { TodayAttendanceCard } from "@/components/attendance/today-attendance-card";
 import { ApiStatus } from "@/components/dashboard/api-status";
 import { TodayExpensesCard } from "@/components/expenses/today-expenses-card";
 import { LowStockCard } from "@/components/inventory/low-stock-card";
 import { PendingPaymentsCard } from "@/components/purchases/pending-payments-card";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useAuth } from "@/lib/auth/auth-context";
+import type { RbacAction, RbacModule } from "@construction-erp/shared";
+import {
+  Boxes,
+  ChevronRight,
+  ClipboardList,
+  FileText,
+  type LucideIcon,
+  Receipt,
+  ShoppingCart,
+  Users,
+} from "lucide-react";
+import Link from "next/link";
 
-// MVP KPIs from docs/prd.md. Values are placeholders until the modules land;
-// "Low Stock Items" and "Today Attendance" are live.
-const KPIS = [
-  { label: "Total Projects", value: "—" },
-  { label: "Active Sites", value: "—" },
-  { label: "Today Attendance", value: "—", live: "attendance" as const },
-  { label: "Today Expenses", value: "—", live: "expenses" as const },
-  { label: "Low Stock Items", value: "—", live: "lowStock" as const },
-  { label: "Pending Payments", value: "—", live: "payments" as const },
-  { label: "DPR Completion", value: "—" },
-  { label: "Overall Progress", value: "—" },
+interface QuickAction {
+  label: string;
+  href: string;
+  icon: LucideIcon;
+  module: RbacModule;
+  action: RbacAction;
+}
+
+const QUICK_ACTIONS: QuickAction[] = [
+  { label: "New DPR", href: "/dpr", icon: ClipboardList, module: "dpr", action: "create" },
+  {
+    label: "Mark attendance",
+    href: "/attendance",
+    icon: Users,
+    module: "attendance",
+    action: "create",
+  },
+  { label: "Add expense", href: "/expenses", icon: Receipt, module: "expenses", action: "create" },
+  { label: "Record stock", href: "/inventory", icon: Boxes, module: "inventory", action: "create" },
+  {
+    label: "New purchase",
+    href: "/purchases",
+    icon: ShoppingCart,
+    module: "purchases",
+    action: "create",
+  },
+  {
+    label: "Generate report",
+    href: "/reports",
+    icon: FileText,
+    module: "reports",
+    action: "export",
+  },
 ];
 
-export default function DashboardPage() {
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+      {children}
+    </h2>
+  );
+}
+
+export default function DashboardPage() {
+  const { user, activeSite, can } = useAuth();
+  const firstName = user?.name?.split(" ")[0] ?? "there";
+  const dateStr = new Date().toLocaleDateString("en-IN", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+  const actions = QUICK_ACTIONS.filter((a) => can(a.module, a.action));
+
+  return (
+    <div className="space-y-8">
+      <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Company-wide overview across all sites.</p>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-[1.7rem]">
+            {greeting()}, {firstName}
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {activeSite?.name ? (
+              <>
+                <span className="font-medium text-foreground/80">{activeSite.name}</span>
+                <span className="px-1.5 text-muted-foreground/50">·</span>
+              </>
+            ) : null}
+            {dateStr}
+          </p>
         </div>
         <ApiStatus />
-      </div>
+      </header>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
-        {KPIS.map((kpi) => {
-          if (kpi.live === "lowStock") return <LowStockCard key={kpi.label} />;
-          if (kpi.live === "attendance") return <TodayAttendanceCard key={kpi.label} />;
-          if (kpi.live === "expenses") return <TodayExpensesCard key={kpi.label} />;
-          if (kpi.live === "payments") return <PendingPaymentsCard key={kpi.label} />;
-          return (
-            <Card key={kpi.label}>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  {kpi.label}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-semibold">{kpi.value}</div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+      <section>
+        <SectionLabel>Today at a glance</SectionLabel>
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+          <TodayAttendanceCard />
+          <TodayExpensesCard />
+          <LowStockCard />
+          <PendingPaymentsCard />
+        </div>
+      </section>
+
+      {actions.length > 0 ? (
+        <section>
+          <SectionLabel>Quick actions</SectionLabel>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {actions.map((a) => (
+              <Link
+                key={a.href}
+                href={a.href}
+                className="group flex items-center gap-3 rounded-xl border border-border/70 bg-card p-3.5 shadow-sm outline-none transition-all hover:-translate-y-0.5 hover:border-accent-solid/40 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring/40"
+              >
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-accent-solid/15 group-hover:text-accent-foreground">
+                  <a.icon className="size-[1.05rem]" />
+                </span>
+                <span className="min-w-0 truncate text-sm font-medium">{a.label}</span>
+                <ChevronRight className="ml-auto size-4 shrink-0 text-muted-foreground/40 transition-transform group-hover:translate-x-0.5 group-hover:text-accent-foreground" />
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
