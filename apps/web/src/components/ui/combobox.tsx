@@ -119,7 +119,7 @@ export function Combobox({
         id={id}
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
-        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-card px-3 text-left text-sm shadow-xs outline-none transition-[box-shadow,border-color] focus-visible:border-accent-solid focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-card px-3 text-left text-sm shadow-xs outline-none transition-[box-shadow,border-color] hover:border-foreground/25 focus-visible:border-accent-solid focus-visible:ring-2 focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <span className={cn("truncate", !selected && "text-muted-foreground/70")}>
           {selected ? selected.label : placeholder}

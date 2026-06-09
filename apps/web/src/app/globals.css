@@ -27,8 +27,8 @@
   --accent: #fbf2e1; /* soft amber tint — hover surfaces */
   --accent-foreground: #a55c06; /* deep amber text on the tint */
   --destructive: #dc2f3f;
-  --border: #e7e5e0;
-  --input: #e3e1db;
+  --border: #e4e2dc; /* hairline card/divider border */
+  --input: #c8ccd4; /* clearly-visible field border */
   --ring: #e0922f; /* saffron focus ring */
 
   /* Brand + sidebar + status */
@@ -131,6 +131,14 @@
     color: var(--color-foreground);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+  }
+  /* Brand-tint native form controls + align numeric fields. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--primary);
+  }
+  input[type="number"] {
+    font-variant-numeric: tabular-nums;
   }
   /* Tighten display headings a touch for a more refined, editorial feel. */
   h1,

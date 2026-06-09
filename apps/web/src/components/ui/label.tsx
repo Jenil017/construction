@@ -6,7 +6,7 @@ function Label({ className, ...props }: React.ComponentProps<"label">) {
     // biome-ignore lint/a11y/noLabelWithoutControl: reusable primitive; associated via htmlFor at call sites
     <label
       className={cn(
-        "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70",
+        "text-[0.8125rem] font-medium leading-none text-foreground/85 peer-disabled:cursor-not-allowed peer-disabled:opacity-70",
         className,
       )}
       {...props}
