@@ -6,9 +6,12 @@ import { ValidationError } from "./common/errors";
 import { notFound, onError } from "./common/middleware/error-handler";
 import { loggerMiddleware } from "./common/middleware/logger";
 import type { Env } from "./env";
+import { attendanceRoutes } from "./modules/attendance";
 import { authRoutes } from "./modules/auth";
 import { dprRoutes } from "./modules/dpr";
 import { healthRoutes } from "./modules/health";
+import { inventoryRoutes } from "./modules/inventory";
+import { salaryRoutes } from "./modules/salary";
 import { siteRoutes } from "./modules/sites";
 import { userRoutes } from "./modules/users";
 
@@ -44,6 +47,9 @@ export function createApp() {
   app.route("/", siteRoutes);
   app.route("/", userRoutes);
   app.route("/", dprRoutes);
+  app.route("/", inventoryRoutes);
+  app.route("/", attendanceRoutes);
+  app.route("/", salaryRoutes);
 
   // Bearer auth scheme so protected endpoints are marked + testable in Swagger.
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {

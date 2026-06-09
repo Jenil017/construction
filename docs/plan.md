@@ -2,7 +2,7 @@
 
 This plan converts the finalized ERP stack into practical delivery phases.
 
-> **Progress:** Phase 0 ✅ · Phase 1 ✅ (2026-06-06) · Phase 2 ✅ (2026-06-06) · Phase 3 ✅ (2026-06-07) · **Refactor: Site-as-tenant ✅ (2026-06-07)** · Phase 4 ✅ (2026-06-07) · Phase 5 ⏳ next. See `docs/progress.md` for the detailed log.
+> **Progress:** Phase 0 ✅ · Phase 1 ✅ (2026-06-06) · Phase 2 ✅ (2026-06-06) · Phase 3 ✅ (2026-06-07) · **Refactor: Site-as-tenant ✅ (2026-06-07)** · Phase 4 ✅ (2026-06-07) · Phase 5 ✅ (2026-06-09) · Phase 6 ✅ (2026-06-09) · Phase 7 next. See `docs/progress.md` for the detailed log.
 >
 > **Model change (2026-06-07):** Company and Project were removed. **Site is now the top-level tenant boundary** — an owner holds many sites, each user has per-site, per-module access (read / read+write), and data is scoped to the active site (chosen via an `X-Site-Id` header / site switcher). References to "Company" / "Project" / company-wide "roles" in the phases below are superseded by the site model; treat `siteId` as the tenant key for Phase 4+.
 
@@ -109,44 +109,48 @@ Deliverables:
 - DPR photo upload flow ✅ (presigned direct-to-R2; verified 8/8 via the API — browser PUT needs bucket CORS)
 - DPR report export job ⏳ deferred to **Phase 8** (needs Cloudflare Queues)
 
-## Phase 5: Inventory Module
+## Phase 5: Inventory Module — ✅ Completed (2026-06-09)
 
 Goals:
 
-- Build material master.
-- Build site-wise stock tracking.
-- Build inward, outward, transfer, and wastage flows.
-- Add low stock alerts.
-- Add inventory audit trail.
+- Build material master. ✅ (`materials`, site-scoped, soft-deleted; SKU unique per site)
+- Build site-wise stock tracking. ✅ (denormalized `current_stock` + immutable `stock_movements` ledger, updated in one transaction)
+- Build inward, outward, transfer, and wastage flows. ✅ inward / outward / wastage / adjustment — ⏳ **transfer deferred** (cross-site; see follow-ups)
+- Add low stock alerts. ✅ (`reorder_level` → `lowStock` flag + `status=low_stock` filter + live dashboard widget)
+- Add inventory audit trail. ✅ (every create/update/delete + each movement audited via `writeAudit`)
 
 Deliverables:
 
-- Material schema
-- Stock ledger schema
-- Inventory APIs
-- Inventory table screens
-- Stock movement forms
-- Low stock dashboard widget
+- Material schema ✅ (`materials`, migration `0002`)
+- Stock ledger schema ✅ (`stock_movements`, append-only with `balance_after`)
+- Inventory APIs ✅ (materials CRUD + movements list/create — 7 endpoints, transactional stock update, negative-stock guard)
+- Inventory table screens ✅ (list + search + low-stock filter, detail modal with ledger)
+- Stock movement forms ✅ (type selector + quantity/counted-stock, live "stock after" preview)
+- Low stock dashboard widget ✅ (`LowStockCard`)
 
-## Phase 6: Attendance And Salary
+Note: **transfers** and **idempotency keys** for movements are deferred (transfers → cross-tenant follow-up; idempotency → Phase 9 with the middleware/service). Inventory Excel/PDF export → Phase 8 (Queues). Migration `0002` applied to Neon on 2026-06-09.
+
+## Phase 6: Attendance And Salary — ✅ Completed (2026-06-09)
 
 Goals:
 
-- Build worker master.
-- Build attendance marking.
-- Support present, absent, half-day, and overtime.
-- Track advances.
-- Calculate salary from approved attendance.
-- Track salary payment status.
+- Build worker master. ✅ (`workers`, site-scoped, soft-deleted)
+- Build attendance marking. ✅ (bulk daysheet upsert, one record per worker/day)
+- Support present, absent, half-day, and overtime. ✅ (status + `overtime_hours`)
+- Track advances. ✅ (`worker_advances` ledger, settled at salary time)
+- Calculate salary from approved attendance. ✅ (transactional run from approved rows; rates snapshotted)
+- Track salary payment status. ✅ (`unpaid`/`partial`/`paid` per payslip)
 
 Deliverables:
 
-- Worker schema
-- Attendance schema
-- Salary schema
-- Attendance APIs
-- Salary APIs
-- Attendance and salary frontend screens
+- Worker schema ✅ (`workers`, migration `0003`)
+- Attendance schema ✅ (`attendance` + approval gate)
+- Salary schema ✅ (`salary_runs` + `salary_run_items`; advances in `worker_advances`)
+- Attendance APIs ✅ (workers CRUD + bulk mark + approve + advances — 11 endpoints)
+- Salary APIs ✅ (generate/list/detail/discard run + record payment — 5 endpoints)
+- Attendance and salary frontend screens ✅ (Daysheet/Workers/Advances tabs; runs list + payslip detail; live "Today Attendance" dashboard widget)
+
+Note: **idempotency keys** (salary generation/payments) and **Attendance Excel / Salary report** exports are deferred (Phase 9 and Phase 8 respectively), like the Inventory/DPR follow-ups. Migration `0003` applied to Neon on 2026-06-09; API smoke test passed 30/30 (see `docs/progress.md`).
 
 ## Phase 7: Expenses, Purchases, And Suppliers
 

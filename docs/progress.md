@@ -10,13 +10,75 @@ Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 | Phase 3 — Company, Project, Site | ✅ Completed | 2026-06-07 |
 | Refactor — Site-as-tenant model | ✅ Completed | 2026-06-07 |
 | Phase 4 — DPR | ✅ Completed | 2026-06-07 |
-| Phase 5 — Inventory | ⬜ Not started | — |
-| Phase 6 — Attendance & Salary | ⬜ Not started | — |
+| Phase 5 — Inventory | ✅ Completed | 2026-06-09 |
+| Phase 6 — Attendance & Salary | ✅ Completed | 2026-06-09 |
 | Phase 7 — Expenses, Purchases, Suppliers | ⬜ Not started | — |
 | Phase 8 — Reports & Background Jobs | ⬜ Not started | — |
 | Phase 9 — Performance, Security, Production | ⬜ Not started | — |
 
 ---
+
+## Phase 6 — Attendance & Salary ✅ (2026-06-09)
+
+Worker master, daily attendance with an approval gate, an advances ledger, and payroll generation — end to end and site-scoped, following the Inventory/DPR module patterns throughout (site-scoped tables, `requireAuth + requireSiteContext + requirePermission(…)`, standard envelope, transactional multi-table writes + `writeAudit`, soft deletes, TanStack-Query web layer).
+
+### Decisions made
+- **Wage model = daily wage + hourly overtime** (per docs/prd.md): each worker has `dailyWage` and an optional `overtimeRate` (₹/hr). A day is `present` (1.0), `half_day` (0.5), or `absent` (0.0); gross = payableDays·dailyWage + overtimeHours·overtimeRate. Rates are **snapshotted onto `salary_run_items`** at generation, so changing a worker's rate never alters an already-generated run.
+- **Salary is generated only from APPROVED attendance** (the docs/architecter.md "attendance approval → salary generation" critical op). Attendance has a per-day approval (`approved` flag + approver/at); `POST /attendance/approve {date}` locks the day. Generation reads only approved rows in the period — generating with none returns `CONFLICT` ("Approve attendance first.").
+- **Bulk daysheet marking.** `POST /attendance` upserts one record per (worker, date) for a whole crew in one call (the mobile flow). Already-approved records are left untouched and reported as `skippedApproved`. A partial unique index `(site_id, worker_id, attendance_date) WHERE deleted_at IS NULL` enforces one live record per worker/day.
+- **Advances under the `attendance` module** (recorded in the field by the same actors who mark attendance; consumed by salary). A run settles every **unsettled** advance dated on/before its period end, stamping `settled_in_run_id` so an advance is never deducted twice; discarding a run clears the stamp, returning advances to the unsettled pool. `settled_in_run_id` is a deliberate **soft reference (no FK)** to avoid a cyclic dependency with `salary_runs`.
+- **Idempotency deferred to Phase 9** (same precedent as Inventory — no middleware yet). Instead, a partial unique index `(site_id, period_start, period_end) WHERE deleted_at IS NULL` + a service-layer pre-check guard one live run per site+period (`CONFLICT` on a duplicate generate). Runs are **soft-deletable** so a period can be regenerated after attendance changes.
+- **Audit trail carries no amounts.** Per docs/architecter.md (never log sensitive salary/payment data), advance/salary/payment audit `after` records only IDs, counts, dates, and status transitions — never wages, advances, or paid amounts.
+- **Payment status per payslip** (`unpaid` → `partial` → `paid`), set by a cumulative `amountPaid` on `POST /salary/runs/{id}/items/{itemId}/pay`; a net ≤ 0 payslip (advances exceeded gross) is auto-marked `paid`.
+
+### Delivered
+- **DB** (`packages/db`): 5 tables — `workers` (name, phone, trade, `daily_wage`, `overtime_rate`, notes; site + site/name indexes), `attendance` (status, `overtime_hours`, approval, marked-by; site/site+date/worker/status indexes + the per-worker/day partial unique), `worker_advances` (amount, date, `settled_in_run_id`; site/worker/date/run indexes), `salary_runs` (period, denormalized totals; site index + period partial unique), `salary_run_items` (snapshotted wages + payslip math + payment status; run/site/worker indexes). Migration `0003_premium_forgotten_one.sql` (additive: 5 tables, FKs, indexes).
+- **API** (`apps/api`): `modules/attendance` — workers CRUD (`GET/POST /attendance/workers`, `GET/PATCH/DELETE /attendance/workers/{id}`), attendance (`GET /attendance`, `POST /attendance` bulk mark, `POST /attendance/approve`), advances (`GET/POST /attendance/advances`, `DELETE /attendance/advances/{id}`) — 11 endpoints under `attendance:*`. `modules/salary` — `GET/POST /salary/runs`, `GET/DELETE /salary/runs/{id}`, `POST /salary/runs/{id}/items/{itemId}/pay` — 5 endpoints under `salary:*`. All site-scoped, audited, paginated/filterable; generation/payment/approval are transactional. Mounted in `app.ts`; documented under the **Attendance** and **Salary** Swagger tags. No new env.
+- **Web** (`apps/web`): `use-attendance` + `use-salary` hooks (`["attendance"]` / `["salary"]` keys; generate/delete-run also invalidate attendance since they settle advances). Real **Attendance** screen with a **Daysheet** tab (date picker, per-worker P/½/A segmented control + OT input, "mark all present", live present/half/absent/unmarked counts, save + approve-day, approved rows locked), a **Workers** tab (master CRUD), and an **Advances** tab (ledger + record/delete, settled badge). Real **Salary** screen (runs list, generate-run modal defaulting to the current month, run-detail modal with the payslip table + per-worker payment recording + discard-run). **Dashboard "Today Attendance" KPI is now live** (`TodayAttendanceCard` → workers present today, links to Attendance).
+
+### Verification
+- `pnpm typecheck` (5 pkgs), `pnpm check` (Biome, 153 files), `pnpm build` (Next 16 routes incl. real `/attendance` 5.6 kB + `/salary` 3.9 kB + live `/dashboard`, + wrangler dry-run) — **all pass**.
+- `pnpm db:generate` → `0003`; SQL reviewed (5 tables, FKs, all indexes, both partial uniques). **Applied to Neon via `pnpm db:migrate` (owner-authorized 2026-06-09).**
+- **API smoke (wrangler dev): 30/30 passed** — owner creates worker A (wage 600, OT 75) + B (wage 500); bulk-mark A present +2h OT and B half_day; generate **before** approval → 409 ("approve first"); approve day → 2 approved; re-marking an approved row is skipped (`skippedApproved`); record a ₹200 advance (unsettled); generate run → **A gross 750 (600 + 2·75), −200 advance, net 550; B 0.5 day → gross 250; run totals gross 1000 / net 800**; the advance is now settled and a settled advance can't be deleted (409); pay B ₹100 → partial, pay A ₹550 → paid, overpay beyond net → 400; duplicate generate for the same period → 409; missing `X-Site-Id` → 400; the smoke workers are invisible from another site (cross-site isolation); discarding the run returns the advance to the unsettled pool. (Test entities cleaned up afterward.)
+- Swagger `/openapi.json` exposes all 9 Phase 6 paths (16 operations) under the **Attendance**/**Salary** tags.
+
+### Notes / follow-ups
+- **Attendance Excel / Salary report** export → Phase 8 (Cloudflare Queues), like the deferred DPR PDF.
+- **Idempotency keys** for salary generation / payments → Phase 9 (with the middleware/service); today guarded by the period unique index + submit-guard.
+- **Mid-period wage changes**: a run uses each worker's rate at generation time for the whole period (snapshotted on the item). Per-day wage snapshots are a future enhancement if needed.
+- **Partial advance carry-forward**: a run deducts the full unsettled advance balance (net may go ≤ 0, auto-`paid`); splitting a large advance across multiple runs is a future enhancement.
+- `read_write` still grants approve/export/delete on `attendance`/`salary`; split the level model later if a site needs e.g. "mark but not approve" or "generate but not pay".
+
+## Phase 5 — Inventory ✅ (2026-06-09)
+
+Site-wise material master + an append-only stock ledger, end to end and site-scoped (the second operational module on the site-as-tenant model). Follows the DPR module's patterns throughout (site-scoped tables, `requireAuth + requireSiteContext + requirePermission("inventory", …)`, standard envelope, transactional multi-table writes + `writeAudit`, soft-deleted master, TanStack-Query web layer).
+
+### Decisions made (with the owner)
+- **Scope: transfers deferred.** Movement types this phase are `inward` (+), `outward` (−), `wastage` (−), and `adjustment` (stock-take → sets the counted value). Site-to-site **transfers** were deferred to a focused follow-up because a transfer crosses the tenant boundary, which the single-active-site `X-Site-Id` model doesn't accommodate cleanly.
+- **Idempotency deferred to Phase 9.** CLAUDE.md mandates idempotency keys for stock movements, but the middleware/service is itself a Phase 9 deliverable and no infra exists yet. For now movements rely on the frontend submit-guard; the idempotency-key layer lands with the rest of Phase 9. (Documented as a follow-up, not silently skipped.)
+- **`currentStock` is a denormalized cached balance**, only ever changed inside the create-movement transaction (insert ledger row + update material + audit, in one tx — the docs/architecter.md "inventory inward/outward" critical op). `balanceAfter` snapshots stock on every ledger row so each row is self-describing. The master **update** endpoint never touches `currentStock`.
+- **Ledger is immutable** — no edit/delete on movements; corrections are made with a new `adjustment`. The master is soft-deleted; its ledger is retained.
+- **Negative stock is blocked**: `outward`/`wastage` beyond available stock returns `CONFLICT` ("Only X {unit} in stock."). Quantities are rounded to the ledger's 3-decimal scale to avoid float artifacts.
+- **SKU is optional, unique per site** among non-deleted rows (partial unique index + a service-layer check for a friendly `CONFLICT`). **Supplier** is a free-text `supplierRef` for now — a supplier FK lands in Phase 7.
+- **Opening stock**: material create accepts an optional `openingStock`; if > 0 the create tx also inserts one opening `adjustment` movement so the ledger and `currentStock` stay consistent.
+
+### Delivered
+- **DB** (`packages/db`): `materials` (name, sku, category, unit, denormalized `current_stock`, `reorder_level`, `unit_cost`, `supplier_ref`, notes; site/site+name/category indexes + partial unique on `(site_id, sku)`) + `stock_movements` (type, quantity, `balance_after`, unit_cost, reference, note, movement_date, created_by; site/material/type/date indexes; append-only, no soft delete). Migration `0002_talented_moonstone.sql` (additive: 2 tables, FKs, indexes).
+- **API** (`apps/api`): `modules/inventory` — `GET/POST /inventory/materials`, `GET/PATCH/DELETE /inventory/materials/{id}`, `GET/POST /inventory/movements` (7 endpoints). All site-scoped + `requirePermission("inventory", …)`, audited, paginated/filterable (materials: search/category/`status=low_stock`; movements: materialId/type/dateFrom/dateTo/reference). Mounted in `app.ts`; documented under the **Inventory** Swagger tag. No new env.
+- **Web** (`apps/web`): `use-inventory` hooks (materials list/detail/create/update/delete + movements list/create, shared `["inventory"]` key); real **Inventory** screen replacing the placeholder (search + low-stock filter, mobile cards / desktop table, low-stock badge, row → detail); material create/edit modal; material detail modal (stock summary, master fields, recent-movements list, Record-movement/Edit/Delete); movement form modal (type selector, quantity-or-counted-stock, live "stock after" preview, submit-guarded). **Dashboard "Low Stock Items" KPI is now live** (`LowStockCard` → count of low-stock materials, links to Inventory).
+
+### Verification
+- `pnpm typecheck` (5 pkgs), `pnpm check` (Biome, 132 files), `pnpm build` (Next 16 routes incl. real `/inventory` 5.99 kB + live `/dashboard`, + wrangler dry-run) — all pass.
+- `pnpm db:generate` → `0002`; SQL reviewed (2 tables, FKs, all indexes, partial unique on sku) → applied to Neon via `pnpm db:migrate`.
+- **API smoke (wrangler dev): 24/24 passed** — owner creates a material with opening stock (currentStock=100, not low at reorder 20); duplicate SKU → 409; inward +50→150, outward −30→120, wastage −5→115; outward 1000 → 409 (insufficient); adjustment → exact count 10 with magnitude |10−115|=105; `status=low_stock` surfaces it once below reorder; ledger has 5 rows with correct `balanceAfter`; detail returns 5 recent movements; cross-site isolation (Vesu material invisible from Ahmedabad → 404, Ahmedabad has 0 materials); missing `X-Site-Id` → 400; **member RBAC** — owner provisions a fresh member (read on Vesu, read+write on Mota), member can view on Vesu but create → 403, create on Mota → 201.
+- Swagger `/docs` shows the **Inventory** tag with all 7 endpoints + schemas.
+
+### Notes / follow-ups
+- **Site-to-site stock transfers** — deferred (cross-tenant; needs a destination-site access check + a linked ledger pair in one tx).
+- **Idempotency keys** for stock movements → Phase 9 (with the idempotency middleware/service).
+- **Supplier FK** for `materials.supplier_ref` / inward `reference` → Phase 7 (Suppliers).
+- **Inventory Excel/PDF export** → Phase 8 (Cloudflare Queues), like the deferred DPR PDF.
+- `read_write` still grants approve/export/delete on `inventory` (no approval flow here, so harmless); split the level model later if a module needs finer grants.
 
 ## Phase 4 — DPR ✅ (2026-06-07)
 
