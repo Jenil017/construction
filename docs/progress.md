@@ -12,11 +12,42 @@ Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 | Phase 4 — DPR | ✅ Completed | 2026-06-07 |
 | Phase 5 — Inventory | ✅ Completed | 2026-06-09 |
 | Phase 6 — Attendance & Salary | ✅ Completed | 2026-06-09 |
-| Phase 7 — Expenses, Purchases, Suppliers | ⬜ Not started | — |
+| Phase 7 — Expenses, Purchases, Suppliers | ✅ Completed | 2026-06-09 |
 | Phase 8 — Reports & Background Jobs | ⬜ Not started | — |
 | Phase 9 — Performance, Security, Production | ⬜ Not started | — |
 
 ---
+
+## Phase 7 — Expenses, Purchases & Suppliers ✅ (2026-06-09)
+
+Three modules in one phase — a supplier master, a site expense register with an approval workflow, and a purchase-order flow whose goods receipt feeds inventory. Site-scoped end to end, following the established module patterns (transactional multi-table writes + `writeAudit`, soft deletes, standard envelope, TanStack-Query web layer). Migration `0004`.
+
+### Decisions made
+- **Site-scoped suppliers** (each site manages its own vendor list, consistent with the site-as-tenant model). Deletion is blocked while any non-deleted purchase references the supplier.
+- **Expenses**: workflow `pending` → `approved` | `rejected` (approval gated by `expenses:approve` — the docs/architecter.md "expense approval → ledger" op; the audit trail is the ledger for MVP). Only **pending** expenses can be edited; `paidTo`/`paymentMode`/`isPettyCash` capture the PRD fields. **Receipt image uploads are deferred** — they reuse the DPR R2 presigned-URL flow once bucket CORS is configured (the same blocker noted for DPR photos).
+- **Single `purchases` entity for the PR→PO→GRN flow** via a status workflow (`draft` → `ordered` → `partially_received` → `received`, or `cancelled`) with line items in `purchase_items`, instead of separate request/order/receipt tables (MVP simplification).
+- **Goods receipt → inventory is the critical transaction** (docs/architecter.md "purchase receipt → stock update"): receiving a material-linked line inserts an `inward` `stock_movement` and bumps the material's `current_stock` (and last `unit_cost`) in the **same transaction** that records the received quantity and recomputes the PO status. Receipts are **delta-based** (received only increases, capped at the ordered qty) so repeated calls never double-add stock; "pending material" = ordered − received. A received/partially-received PO can't be deleted (inventory was already updated).
+- **Supplier payment status** per purchase (`unpaid` → `partial` → `paid`) via a cumulative `amountPaid`; a supplier's outstanding balance is `Σ(total − amountPaid)` over its live purchases.
+- **Audit carries no amounts** — expense/purchase/payment audit `after` records category/status/counts only, never amounts or paidTo (sensitive payment data per docs/architecter.md).
+- **Idempotency** for purchase creation/payments deferred to Phase 9 (with the middleware); the delta-based receive is inherently safe against double-application.
+
+### Delivered
+- **DB** (`packages/db`): `suppliers` (name, contact, phone, email, GSTIN, address; site + site/name indexes), `expenses` (date, category, amount, paidTo, paymentMode, pettyCash, approval; site/date/category/status indexes), `purchases` (supplier FK, PO number, dates, status, totals, payment status; site/status/supplier/date indexes), `purchase_items` (optional material FK, qty/unit/rate/amount, receivedQty; purchase/site/material indexes). Migration `0004_gifted_nuke.sql` (additive: 4 tables, FKs, indexes).
+- **API** (`apps/api`): `modules/suppliers` (CRUD + outstanding detail — 5 endpoints, `suppliers:*`), `modules/expenses` (CRUD + approve/reject — 6 endpoints, `expenses:*`), `modules/purchases` (CRUD + receive + pay — 7 endpoints, `purchases:*`). 18 endpoints total, all site-scoped, audited, paginated/filterable; receive + pay + approval are transactional. Mounted in `app.ts`; Swagger tags **Suppliers**/**Expenses**/**Purchases**. No new env.
+- **Web** (`apps/web`): `use-suppliers` / `use-expenses` / `use-purchases` hooks (receive invalidates the `["inventory"]` cache too). Real **Suppliers** screen (CRUD), **Expenses** screen (table + status/search filters, inline approve/reject, petty-cash badge), **Purchases** screen (list + status filter, new-purchase modal with dynamic line items + material picker + live total, and a detail modal that places the order, **receives goods**, records supplier payment, and cancels/deletes). **Dashboard "Today Expenses" and "Pending Payments" KPIs are now live** — with Phase 5/6, four of the eight dashboard KPIs read real per-site data.
+
+### Verification
+- `pnpm typecheck` (5 pkgs), `pnpm check` (Biome, 175 files), `pnpm build` (Next 16 routes incl. real `/suppliers` 2.82 kB + `/expenses` 3.79 kB + `/purchases` 5.89 kB + live `/dashboard`, + wrangler dry-run) — **all pass**.
+- `pnpm db:generate` → `0004`; SQL reviewed (4 tables, FKs, all indexes). **Applied to Neon via `pnpm db:migrate` (owner-authorized 2026-06-09).**
+- **API smoke (wrangler dev): 26/26 passed** — create supplier (detail outstanding 0); create expense → pending → approve → **edit approved blocked (409)** → second expense rejected; create a 2-line PO (cement 100×₹50 linked to a material + ₹500 labour) → total ₹5500, status ordered; **receive 40 → partially_received and material stock 0→40 with an inward ledger movement of 40**; supplier outstanding ₹5500; receive the rest → received, stock →100; pay ₹2000 → partial (outstanding ₹3500), overpay → 400, pay ₹5500 → paid; delete received PO → 409; delete supplier with purchases → 409; missing `X-Site-Id` → 400; supplier invisible from another site (cross-site isolation). (Expenses + the test material were cleaned up; the received PO and its supplier are retained — a received PO can't be deleted — and are tagged `ZZ7` in the dev DB.)
+- Swagger `/openapi.json` exposes all 9 Phase 7 paths (18 operations) under the **Suppliers**/**Expenses**/**Purchases** tags.
+
+### Notes / follow-ups
+- **Expense receipt uploads** → reuse the DPR R2 presigned-URL flow once the bucket CORS policy is set (the DPR-photos browser-upload blocker).
+- **Excel/PDF exports** (expense report, purchase/GRN, supplier ledger) → Phase 8 (Cloudflare Queues).
+- **Idempotency keys** for purchase creation / payments → Phase 9.
+- **Partial-receipt corrections** (reducing an already-received qty) are intentionally disallowed (would need a reversing outward movement) — add later if needed.
+- `read_write` grants approve/delete on these modules; split the level model later if a site needs e.g. "record expenses but not approve" or "raise POs but not pay".
 
 ## Phase 6 — Attendance & Salary ✅ (2026-06-09)
 

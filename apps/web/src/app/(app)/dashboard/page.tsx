@@ -1,6 +1,8 @@
 import { TodayAttendanceCard } from "@/components/attendance/today-attendance-card";
 import { ApiStatus } from "@/components/dashboard/api-status";
+import { TodayExpensesCard } from "@/components/expenses/today-expenses-card";
 import { LowStockCard } from "@/components/inventory/low-stock-card";
+import { PendingPaymentsCard } from "@/components/purchases/pending-payments-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 // MVP KPIs from docs/prd.md. Values are placeholders until the modules land;
@@ -9,9 +11,9 @@ const KPIS = [
   { label: "Total Projects", value: "—" },
   { label: "Active Sites", value: "—" },
   { label: "Today Attendance", value: "—", live: "attendance" as const },
-  { label: "Today Expenses", value: "—" },
+  { label: "Today Expenses", value: "—", live: "expenses" as const },
   { label: "Low Stock Items", value: "—", live: "lowStock" as const },
-  { label: "Pending Payments", value: "—" },
+  { label: "Pending Payments", value: "—", live: "payments" as const },
   { label: "DPR Completion", value: "—" },
   { label: "Overall Progress", value: "—" },
 ];
@@ -31,6 +33,8 @@ export default function DashboardPage() {
         {KPIS.map((kpi) => {
           if (kpi.live === "lowStock") return <LowStockCard key={kpi.label} />;
           if (kpi.live === "attendance") return <TodayAttendanceCard key={kpi.label} />;
+          if (kpi.live === "expenses") return <TodayExpensesCard key={kpi.label} />;
+          if (kpi.live === "payments") return <PendingPaymentsCard key={kpi.label} />;
           return (
             <Card key={kpi.label}>
               <CardHeader className="pb-2">

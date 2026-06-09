@@ -22,3 +22,7 @@ export * from "./attendance";
 export * from "./worker-advances";
 export * from "./salary-runs";
 export * from "./salary-run-items";
+export * from "./suppliers";
+export * from "./expenses";
+export * from "./purchases";
+export * from "./purchase-items";
