@@ -58,7 +58,7 @@ export function StatCard({
           <p className="truncate text-sm font-medium text-muted-foreground">{label}</p>
           <p
             className={cn(
-              "nums mt-2 text-2xl font-semibold tracking-tight sm:text-[1.7rem]",
+              "nums mt-2 truncate text-2xl font-semibold tracking-tight sm:text-[1.7rem]",
               emphasize ? t.value : "text-foreground",
             )}
           >

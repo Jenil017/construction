@@ -170,7 +170,7 @@ export default function ReportsPage() {
               </>
             ) : null}
           </div>
-          <div className="mt-4 flex items-center gap-3">
+          <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button onClick={onGenerate} disabled={!reportType || createExport.isPending}>
               {createExport.isPending ? (
                 <Loader2 className="size-4 animate-spin" />

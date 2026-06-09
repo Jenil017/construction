@@ -95,7 +95,7 @@ export function RunDetailModal({ runId, onClose }: RunDetailModalProps) {
             ].map((s) => (
               <div key={s.label} className="rounded-lg border bg-muted/30 p-3">
                 <p className="text-xs text-muted-foreground">{s.label}</p>
-                <p className="font-semibold tabular-nums">{s.value}</p>
+                <p className="truncate font-semibold tabular-nums">{s.value}</p>
               </div>
             ))}
           </div>

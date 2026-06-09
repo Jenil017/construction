@@ -182,7 +182,7 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
             ) : null}
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {[
               { label: "Total", value: `₹${po.total}` },
               { label: "Paid", value: `₹${po.amountPaid}` },
@@ -190,7 +190,7 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
             ].map((s) => (
               <div key={s.label} className="rounded-lg border bg-muted/30 p-3">
                 <p className="text-xs text-muted-foreground">{s.label}</p>
-                <p className="font-semibold tabular-nums">{s.value}</p>
+                <p className="truncate font-semibold tabular-nums">{s.value}</p>
               </div>
             ))}
           </div>

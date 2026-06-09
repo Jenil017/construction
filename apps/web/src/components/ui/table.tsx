@@ -4,8 +4,10 @@ import type * as React from "react";
 function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
     <div className="w-full overflow-x-auto">
+      {/* min-width forces horizontal scroll on small screens instead of crushing
+          columns (see docs/UX_playbook.md §12). */}
       <table
-        className={cn("w-full caption-bottom border-collapse text-sm", className)}
+        className={cn("w-full min-w-[560px] caption-bottom border-collapse text-sm", className)}
         {...props}
       />
     </div>

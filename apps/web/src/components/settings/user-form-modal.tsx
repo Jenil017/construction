@@ -271,9 +271,12 @@ export function UserFormModal({ open, onClose, user }: UserFormModalProps) {
           </div>
           <div className="divide-y rounded-md border">
             {MODULES.map(({ module, label }) => (
-              <div key={module} className="flex items-center justify-between gap-2 px-3 py-1.5">
+              <div
+                key={module}
+                className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5"
+              >
                 <span className="text-sm">{label}</span>
-                <div className="flex gap-1">
+                <div className="flex flex-wrap justify-end gap-1">
                   {(
                     [
                       ["none", "None"],
