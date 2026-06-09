@@ -43,14 +43,28 @@ function client(cfg: R2Config): AwsClient {
   });
 }
 
+/** Response header overrides baked into a presigned GET URL (S3 `response-*`). */
+export interface GetResponseOverrides {
+  /** e.g. `attachment; filename="report.csv"` to force a download. */
+  contentDisposition?: string;
+  contentType?: string;
+}
+
 async function presign(
   cfg: R2Config,
   key: string,
   method: "PUT" | "GET",
   expiresSec: number,
+  overrides?: GetResponseOverrides,
 ): Promise<string> {
   const url = new URL(objectUrl(cfg, key));
   url.searchParams.set("X-Amz-Expires", String(expiresSec));
+  if (overrides?.contentDisposition) {
+    url.searchParams.set("response-content-disposition", overrides.contentDisposition);
+  }
+  if (overrides?.contentType) {
+    url.searchParams.set("response-content-type", overrides.contentType);
+  }
   const signed = await client(cfg).sign(url.toString(), {
     method,
     aws: { signQuery: true },
@@ -63,9 +77,39 @@ export function presignPutUrl(cfg: R2Config, key: string, expiresSec = 300): Pro
   return presign(cfg, key, "PUT", expiresSec);
 }
 
-/** Presigned GET URL for displaying/downloading a stored object. */
-export function presignGetUrl(cfg: R2Config, key: string, expiresSec = 3600): Promise<string> {
-  return presign(cfg, key, "GET", expiresSec);
+/**
+ * Presigned GET URL for displaying/downloading a stored object. Pass `overrides`
+ * to force a download with a friendly filename (used by report exports).
+ */
+export function presignGetUrl(
+  cfg: R2Config,
+  key: string,
+  expiresSec = 3600,
+  overrides?: GetResponseOverrides,
+): Promise<string> {
+  return presign(cfg, key, "GET", expiresSec, overrides);
+}
+
+/**
+ * Upload bytes to R2 from the Worker (server-side PUT). This is the one case
+ * where bytes flow through the Worker rather than a direct browser upload — the
+ * background report consumer generates the file in-isolate and stores it. User
+ * file uploads still use the presigned-PUT flow (see docs/architecter.md).
+ */
+export async function putObject(
+  cfg: R2Config,
+  key: string,
+  body: Uint8Array | ArrayBuffer | string,
+  contentType: string,
+): Promise<void> {
+  const res = await client(cfg).fetch(objectUrl(cfg, key), {
+    method: "PUT",
+    body,
+    headers: { "content-type": contentType },
+  });
+  if (!res.ok) {
+    throw new Error(`R2 PUT failed (${res.status}) for ${key}`);
+  }
 }
 
 /** Delete an object (server-side S3 DELETE; small/rare, so a direct call is fine). */

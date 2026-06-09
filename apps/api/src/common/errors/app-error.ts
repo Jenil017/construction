@@ -103,6 +103,12 @@ export class UploadError extends AppError {
   }
 }
 
+export class ExportError extends AppError {
+  constructor(message = "The report could not be generated. Please try again.", status = 400) {
+    super({ code: ERROR_CODES.EXPORT_FAILED, message, status });
+  }
+}
+
 export class DatabaseError extends AppError {
   constructor(cause?: unknown) {
     super({

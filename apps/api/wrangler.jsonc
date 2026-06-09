@@ -14,10 +14,24 @@
     // https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com. Keys are secrets (below).
     "R2_ACCOUNT_ID": "718e3f9a2c031cde8a52fa9cc16b696f",
     "R2_BUCKET": "construction"
+  },
+  // Cloudflare Queues: background report exports (PDF/Excel) — see modules/reports
+  // + queue/consumer. This Worker is both producer (EXPORT_QUEUE) and consumer.
+  // Requires a paid Workers plan in prod (`wrangler queues create construction-erp-exports`);
+  // `wrangler dev` simulates the queue locally. Without the binding the producer
+  // falls back to in-isolate processing (executionCtx.waitUntil), so exports still work.
+  "queues": {
+    "producers": [{ "binding": "EXPORT_QUEUE", "queue": "construction-erp-exports" }],
+    "consumers": [
+      {
+        "queue": "construction-erp-exports",
+        "max_batch_size": 5,
+        "max_batch_timeout": 5,
+        "max_retries": 3
+      }
+    ]
   }
   // Secrets (set via `wrangler secret put` in prod, `.dev.vars` locally):
   //   DATABASE_URL, JWT_SECRET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
   // Files use R2 presigned URLs (no proxy through the Worker) — see common/r2.
-  // Bindings added in later phases:
-  //   queues        -> PDF/Excel/image background jobs
 }

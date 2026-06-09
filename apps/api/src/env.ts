@@ -1,6 +1,7 @@
 import type { Database } from "@construction-erp/db";
 import type { AuthContext } from "./common/auth/context";
 import type { Logger } from "./common/logger";
+import type { ExportJobMessage } from "./queue/types";
 
 /**
  * Hono environment for the Worker.
@@ -19,6 +20,10 @@ export interface Env {
     R2_BUCKET: string;
     R2_ACCESS_KEY_ID: string;
     R2_SECRET_ACCESS_KEY: string;
+    // Cloudflare Queues producer binding for background report exports (see
+    // common/r2 + modules/reports). Optional: when absent, the reports producer
+    // falls back to in-isolate processing via executionCtx.waitUntil.
+    EXPORT_QUEUE?: Queue<ExportJobMessage>;
   };
   Variables: {
     requestId: string;

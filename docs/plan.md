@@ -2,7 +2,7 @@
 
 This plan converts the finalized ERP stack into practical delivery phases.
 
-> **Progress:** Phase 0 ✅ · Phase 1 ✅ (2026-06-06) · Phase 2 ✅ (2026-06-06) · Phase 3 ✅ (2026-06-07) · **Refactor: Site-as-tenant ✅ (2026-06-07)** · Phase 4 ✅ (2026-06-07) · Phase 5 ✅ (2026-06-09) · Phase 6 ✅ (2026-06-09) · Phase 7 ✅ (2026-06-09) · Phase 8 next. See `docs/progress.md` for the detailed log.
+> **Progress:** Phase 0 ✅ · Phase 1 ✅ (2026-06-06) · Phase 2 ✅ (2026-06-06) · Phase 3 ✅ (2026-06-07) · **Refactor: Site-as-tenant ✅ (2026-06-07)** · Phase 4 ✅ (2026-06-07) · Phase 5 ✅ (2026-06-09) · Phase 6 ✅ (2026-06-09) · Phase 7 ✅ (2026-06-09) · Phase 8 ✅ (2026-06-09) · Phase 9 next. See `docs/progress.md` for the detailed log.
 >
 > **Model change (2026-06-07):** Company and Project were removed. **Site is now the top-level tenant boundary** — an owner holds many sites, each user has per-site, per-module access (read / read+write), and data is scoped to the active site (chosen via an `X-Site-Id` header / site switcher). References to "Company" / "Project" / company-wide "roles" in the phases below are superseded by the site model; treat `siteId` as the tenant key for Phase 4+.
 
@@ -174,24 +174,30 @@ Deliverables:
 
 Note: **expense receipt uploads** (reuse the DPR R2 flow once bucket CORS is set), **exports** (Phase 8), and **idempotency keys** for purchase creation/payments (Phase 9) are deferred. Migration `0004` applied to Neon on 2026-06-09; API smoke test passed 26/26 (see `docs/progress.md`).
 
-## Phase 8: Reports And Background Jobs
+## Phase 8: Reports And Background Jobs — ✅ Completed (2026-06-09)
 
 Goals:
 
-- Use Cloudflare Queues for PDF generation.
-- Use Cloudflare Queues for Excel exports.
-- Store generated files in R2 when needed.
-- Add export status tracking.
-- Add retry handling.
+- Use Cloudflare Queues for PDF generation. ✅ (queue producer + consumer; `pdf-lib`)
+- Use Cloudflare Queues for Excel exports. ✅ (CSV — spreadsheet-friendly; true `.xlsx` is a follow-up)
+- Store generated files in R2 when needed. ✅ (`putObject`; key `exports/{siteId}/{jobId}.{ext}`)
+- Add export status tracking. ✅ (`queued → processing → completed | failed`; live polling)
+- Add retry handling. ✅ (`attempts` + queue `retry()` under `max_retries`; permanent failures recorded)
 
 Deliverables:
 
-- Report job schema
-- Queue producers
-- Queue consumers
-- PDF reports
-- Excel exports
-- Download links
+- Report job schema ✅ (`export_jobs`, migration `0005`)
+- Queue producers ✅ (`EXPORT_QUEUE` binding + `waitUntil` fallback when unbound)
+- Queue consumers ✅ (`src/queue/consumer.ts`; Worker exports `{ fetch, queue }`)
+- PDF reports ✅ (paginated A4-landscape tables with totals via `pdf-lib`)
+- Excel exports ✅ (UTF-8 CSV with BOM; 8 report types across all modules)
+- Download links ✅ (short-lived presigned R2 GET with attachment disposition)
+
+Eight report types (`GET /reports/types`): `dpr_log`, `inventory_stock`, `stock_ledger`,
+`attendance_register`, `salary_register`, `expense_register`, `purchase_register`,
+`supplier_ledger` — one+ per operational module, delivering the exports deferred from
+Phases 4–7. Note: prod Queues need a paid Workers plan; migration `0005` apply to Neon +
+the live smoke test are pending owner authorization. See `docs/progress.md`.
 
 ## Phase 9: Performance, Security, And Production Readiness
 

@@ -2,6 +2,99 @@
 
 Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 
+## Phase 8 — Reports & Background Jobs ✅ (2026-06-09)
+
+A generic, queue-backed report export pipeline covering every operational module. A
+request records an `export_jobs` row + enqueues it to **Cloudflare Queues**; the queue
+**consumer** generates the file off the request path, stores it in **R2**, and flips the
+job status; the client polls and downloads via a short-lived presigned URL. Migration
+`0005`. This also satisfies the export deliverables deferred from Phases 4–7.
+
+### Decisions made
+- **One generic export framework, not per-module endpoints.** A dataset *builder* per
+  report type returns `{ title, subtitle, columns, rows, totals }`; two renderers
+  (CSV, PDF) consume that shape. Adding a report = one builder + one catalog entry.
+  Eight report types ship: `dpr_log`, `inventory_stock`, `stock_ledger`,
+  `attendance_register`, `salary_register`, `expense_register`, `purchase_register`,
+  `supplier_ledger` — one+ per module, exposed via `GET /reports/types`.
+- **Queues with a graceful fallback.** The Worker is both producer (`EXPORT_QUEUE`
+  binding) and consumer (`queue` handler). When the binding is absent (e.g. local dev
+  without Queues, or before the paid plan / `wrangler queues create`), the producer
+  falls back to in-isolate processing via `executionCtx.waitUntil` — so exports work in
+  every environment and Queues are used when available. **Prod needs a paid Workers
+  plan** + `wrangler queues create construction-erp-exports` (documented in `wrangler.jsonc`).
+- **Formats: PDF (pdf-lib) + CSV.** `pdf-lib` is pure-JS and bundles for Workers (dry-run
+  upload 1.96 MiB / 427 KiB gzip). CSV (UTF-8 with a BOM, RFC-escaped) is the
+  spreadsheet-friendly "Excel" export and opens natively in Excel; **true `.xlsx` is a
+  future enhancement.** PDF tables are A4-landscape, paginated, with totals + page
+  numbers; pdf-lib's standard fonts are WinAnsi-only, so the renderer maps `₹`→`Rs` and
+  drops non-Latin glyphs to `?` — **non-Latin text (e.g. Gujarati names) should be
+  exported as CSV**, which preserves UTF-8.
+- **Files stored in R2 from the Worker.** Added `putObject` to `common/r2` — the one case
+  where bytes flow through the Worker (background generation), distinct from the
+  presigned-PUT browser-upload flow. Download uses a presigned **GET** with a
+  `response-content-disposition: attachment` override (valid ~5 min) so the browser saves
+  with a friendly filename. Object key `exports/{siteId}/{jobId}.{ext}`.
+- **Status + retries.** Lifecycle `queued → processing → completed | failed`, with an
+  `attempts` counter. The consumer `retry()`s a transient failure under the cap
+  (`max_retries: 3`) and records a user-facing `errorMessage` + `ack()`s a permanent
+  failure (no infinite redelivery, no dead-letter queue needed). Job creation + its audit
+  row are written in **one transaction** (the docs/architecter.md "export job + audit log"
+  critical op). Audit carries only `{ reportType, format }` — never row data.
+- **Permission model.** Generation is gated by `reports:export` **and** `view` on the
+  source module (so a user can't export data they can't see); the owner bypasses both.
+  Listing/status/download need `reports:view`; deletion needs `reports:delete`. A 5000-row
+  cap per export is **flagged** in the report subtitle (no silent truncation).
+- **Row cap is flagged, not silent**, per the "no silent failures" rule.
+
+### Delivered
+- **DB** (`packages/db`): `export_jobs` (site-scoped; reportType, format, status, params
+  jsonb, fileName, objectKey, fileSize, rowCount, errorMessage, attempts, correlationId,
+  requestedBy, completedAt; site / site+status / requestedBy / created indexes). Migration
+  `0005_cool_stature.sql` (additive: 1 table, 2 FKs, 4 indexes).
+- **API** (`apps/api`): `common/r2` gains `putObject` + a content-disposition override on
+  `presignGetUrl`; new `ExportError` (`EXPORT_FAILED`). `modules/reports` — datasets
+  (`reports.datasets.ts`), renderers (`reports.render.ts`), the job service
+  (`reports.service.ts` → `runExportJob` / `processExportMessage`), and routes:
+  `GET /reports/types`, `GET/POST /reports/exports`, `GET /reports/exports/{id}`,
+  `GET /reports/exports/{id}/download`, `DELETE /reports/exports/{id}` (6 endpoints under
+  the **Reports** tag, all site-scoped + `requirePermission("reports", …)`). Queue plumbing
+  in `src/queue/` (`types.ts`, `consumer.ts`); the Worker entry now exports
+  `{ fetch, queue }`. New binding `EXPORT_QUEUE` (optional). New dep `pdf-lib`.
+- **Web** (`apps/web`): `use-reports` hook (types/list/create/delete + a presigned-download
+  helper; the list **polls every 2.5 s while any job is running**). Real **Reports** screen
+  replacing the placeholder — a generate panel (report picker + CSV/PDF + optional date
+  range, shown only for date-ranged reports) and a status-tracked job table with live
+  badges, row/size, and a Download action; permission-gated (export/delete).
+
+### Verification
+- `pnpm typecheck` (4 pkgs), `pnpm check` (Biome, 185 files), `pnpm build` (Next 14 routes
+  incl. real `/reports` 3.18 kB; **API wrangler dry-run bundles `pdf-lib` + the `queue`
+  handler, 1.96 MiB / 427 KiB gzip, `EXPORT_QUEUE` binding recognized**) — **all pass**.
+- `pnpm db:generate` → `0005`; SQL reviewed (1 table, FKs, all 4 indexes).
+- **Offline renderer check passed** (ran the real `renderCsv`/`renderPdf` over a dataset
+  with money/number/date columns, a `₹` sign, an embedded quote+comma, and Gujarati text):
+  CSV has the UTF-8 BOM, escapes quotes/commas, preserves Gujarati; PDF emits valid `%PDF-`
+  bytes; the `₹`/Gujarati sanitizer never throws; empty datasets still render valid files.
+- **Pending owner authorization (same gate as every prior migration):** applying
+  `0005` to Neon (`pnpm db:migrate`) and the live `wrangler dev` smoke test (login →
+  create export → poll to completed → download). Not run here to avoid touching the live DB
+  without sign-off.
+
+### Notes / follow-ups
+- **Prod Queues need a paid Workers plan** + `wrangler queues create construction-erp-exports`;
+  set R2 secrets via `wrangler secret put`. Until then the `waitUntil` fallback runs exports.
+- **True `.xlsx`** (vs CSV) and **image compression/enhancement jobs** (docs/architecter.md
+  lists them under Queues) are future enhancements — the queue + job-status scaffolding is
+  in place to host them.
+- **Idempotency keys** for export generation → Phase 9 (with the middleware); today a fresh
+  job row per request + the delta-free read-only generation make double-submits harmless.
+- **DPR PDF / Inventory / Attendance / Salary / Expense / Purchase exports** deferred from
+  Phases 4–7 are delivered here as report types.
+- `read_write` grants `reports:export`/`delete`; split the level model later if a site needs
+  e.g. "view reports but not export".
+
+
 | Phase | Status | Date |
 |---|---|---|
 | Phase 0 — Project Setup & Documentation | ✅ Completed | — |
@@ -13,7 +106,7 @@ Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 | Phase 5 — Inventory | ✅ Completed | 2026-06-09 |
 | Phase 6 — Attendance & Salary | ✅ Completed | 2026-06-09 |
 | Phase 7 — Expenses, Purchases, Suppliers | ✅ Completed | 2026-06-09 |
-| Phase 8 — Reports & Background Jobs | ⬜ Not started | — |
+| Phase 8 — Reports & Background Jobs | ✅ Completed | 2026-06-09 |
 | Phase 9 — Performance, Security, Production | ⬜ Not started | — |
 
 ---
