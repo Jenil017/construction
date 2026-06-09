@@ -22,6 +22,7 @@ import {
   useExpenses,
   useSetExpenseStatus,
 } from "@/lib/hooks/use-expenses";
+import { useOpenOnParam } from "@/lib/hooks/use-open-on-param";
 import { Loader2, Plus, Search, Trash2 } from "lucide-react";
 import { useState } from "react";
 
@@ -55,6 +56,12 @@ export default function ExpensesPage() {
   const canApprove = can("expenses", "approve");
   const canDelete = can("expenses", "delete");
 
+  const openCreate = () => {
+    setEditing(null);
+    setFormOpen(true);
+  };
+  useOpenOnParam("new", canCreate, openCreate);
+
   const decide = async (e: Expense, next: "approved" | "rejected") => {
     try {
       await setExpenseStatus.mutateAsync({ id: e.id, status: next });
@@ -81,13 +88,7 @@ export default function ExpensesPage() {
           </p>
         </div>
         {canCreate ? (
-          <Button
-            onClick={() => {
-              setEditing(null);
-              setFormOpen(true);
-            }}
-            className="w-full sm:w-auto"
-          >
+          <Button onClick={openCreate} className="w-full sm:w-auto">
             <Plus className="size-4" />
             Add expense
           </Button>

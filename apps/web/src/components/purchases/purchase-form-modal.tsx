@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
@@ -95,6 +96,11 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
   const lineAmount = (l: LineDraft) => (Number(l.quantity) || 0) * (Number(l.rate) || 0);
   const total = lines.reduce((s, l) => s + lineAmount(l), 0);
 
+  const materialOptions = [
+    { value: "", label: "Free item (no material)" },
+    ...(materials ?? []).map((m) => ({ value: m.id, label: m.name, hint: m.unit })),
+  ];
+
   const submit = async () => {
     setError(null);
     if (!supplierId) {
@@ -171,18 +177,15 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="po-supplier">Supplier</Label>
-            <Select
+            <Combobox
               id="po-supplier"
+              options={(suppliers ?? []).map((s) => ({ value: s.id, label: s.name }))}
               value={supplierId}
-              onChange={(e) => setSupplierId(e.target.value)}
-            >
-              <option value="">Select a supplier…</option>
-              {(suppliers ?? []).map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
+              onChange={setSupplierId}
+              placeholder="Select a supplier…"
+              searchPlaceholder="Search suppliers…"
+              emptyText="No suppliers yet."
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="po-number">PO number</Label>
@@ -235,18 +238,15 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
           {lines.map((l) => (
             <div key={l.key} className="space-y-2 rounded-lg border p-3">
               <div className="flex items-center gap-2">
-                <Select
-                  value={l.materialId}
-                  onChange={(e) => onPickMaterial(l.key, e.target.value)}
+                <Combobox
                   className="flex-1"
-                >
-                  <option value="">Free item (no material)</option>
-                  {(materials ?? []).map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </Select>
+                  options={materialOptions}
+                  value={l.materialId}
+                  onChange={(v) => onPickMaterial(l.key, v)}
+                  placeholder="Free item (no material)"
+                  searchPlaceholder="Search materials…"
+                  emptyText="No materials yet."
+                />
                 <Button
                   type="button"
                   variant="ghost"

@@ -27,7 +27,7 @@ const TYPES: { value: MovementType; label: string; hint: string }[] = [
 ];
 
 const textareaClass =
-  "flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+  "flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-xs transition-[color,box-shadow,border-color] outline-none placeholder:text-muted-foreground/70 focus-visible:border-accent-solid focus-visible:ring-2 focus-visible:ring-ring/30";
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);

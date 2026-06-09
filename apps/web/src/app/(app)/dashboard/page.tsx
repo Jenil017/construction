@@ -28,7 +28,7 @@ interface QuickAction {
 }
 
 const QUICK_ACTIONS: QuickAction[] = [
-  { label: "New DPR", href: "/dpr", icon: ClipboardList, module: "dpr", action: "create" },
+  { label: "New DPR", href: "/dpr?new=1", icon: ClipboardList, module: "dpr", action: "create" },
   {
     label: "Mark attendance",
     href: "/attendance",
@@ -36,11 +36,23 @@ const QUICK_ACTIONS: QuickAction[] = [
     module: "attendance",
     action: "create",
   },
-  { label: "Add expense", href: "/expenses", icon: Receipt, module: "expenses", action: "create" },
-  { label: "Record stock", href: "/inventory", icon: Boxes, module: "inventory", action: "create" },
+  {
+    label: "Add expense",
+    href: "/expenses?new=1",
+    icon: Receipt,
+    module: "expenses",
+    action: "create",
+  },
+  {
+    label: "Add material",
+    href: "/inventory?new=1",
+    icon: Boxes,
+    module: "inventory",
+    action: "create",
+  },
   {
     label: "New purchase",
-    href: "/purchases",
+    href: "/purchases?new=1",
     icon: ShoppingCart,
     module: "purchases",
     action: "create",

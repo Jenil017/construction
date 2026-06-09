@@ -17,6 +17,7 @@ import {
 import { ApiError } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth/auth-context";
 import { type DprRow, type DprStatus, useDeleteDpr, useDprList } from "@/lib/hooks/use-dpr";
+import { useOpenOnParam } from "@/lib/hooks/use-open-on-param";
 import { Camera, ChevronRight, Loader2, Plus, Search, Trash2 } from "lucide-react";
 import { useState } from "react";
 
@@ -54,6 +55,7 @@ export default function DprPage() {
     setEditing(null);
     setFormOpen(true);
   };
+  useOpenOnParam("new", canCreate, openCreate);
   const openEdit = (dpr: DprRow) => {
     setDetailId(null);
     setEditing(dpr);

@@ -1,10 +1,10 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
-import { Select } from "@/components/ui/select";
 import { ApiError } from "@/lib/api-client";
 import { type Worker, useCreateAdvance } from "@/lib/hooks/use-attendance";
 import { useEffect, useState } from "react";
@@ -85,20 +85,20 @@ export function AdvanceFormModal({ open, onClose, workers, workerId }: AdvanceFo
       <div className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="adv-worker">Worker</Label>
-          <Select
+          <Combobox
             id="adv-worker"
+            options={workers.map((w) => ({
+              value: w.id,
+              label: w.name,
+              hint: w.trade ?? undefined,
+            }))}
             value={selectedWorker}
-            onChange={(e) => setSelectedWorker(e.target.value)}
+            onChange={setSelectedWorker}
             disabled={!!workerId}
-          >
-            <option value="">Select a worker…</option>
-            {workers.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name}
-                {w.trade ? ` · ${w.trade}` : ""}
-              </option>
-            ))}
-          </Select>
+            placeholder="Select a worker…"
+            searchPlaceholder="Search workers…"
+            emptyText="No workers yet."
+          />
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">

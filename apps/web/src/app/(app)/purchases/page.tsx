@@ -14,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/lib/auth/auth-context";
+import { useOpenOnParam } from "@/lib/hooks/use-open-on-param";
 import {
   type PurchasePaymentStatus,
   type PurchaseStatus,
@@ -50,6 +51,7 @@ export default function PurchasesPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
 
   const canCreate = can("purchases", "create");
+  useOpenOnParam("new", canCreate, () => setFormOpen(true));
 
   return (
     <div className="space-y-5 sm:space-y-6">

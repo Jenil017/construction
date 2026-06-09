@@ -17,6 +17,7 @@ import {
 import { ApiError } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth/auth-context";
 import { type Material, useDeleteMaterial, useMaterials } from "@/lib/hooks/use-inventory";
+import { useOpenOnParam } from "@/lib/hooks/use-open-on-param";
 import { ChevronRight, Loader2, Plus, Search, Trash2 } from "lucide-react";
 import { useState } from "react";
 
@@ -46,6 +47,7 @@ export default function InventoryPage() {
     setEditing(null);
     setFormOpen(true);
   };
+  useOpenOnParam("new", canCreate, openCreate);
   const openEdit = (material: Material) => {
     setDetailId(null);
     setEditing(material);
