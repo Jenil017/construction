@@ -213,7 +213,9 @@
   .animate-pop-in {
     animation: pop-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
+  /* No `both`/`forwards` fill: the transform must NOT linger after the reveal,
+     or it becomes a containing block that traps fixed/absolute descendants. */
   .animate-rise-in {
-    animation: rise-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: rise-in 0.3s cubic-bezier(0.22, 1, 0.36, 1);
   }
 }
