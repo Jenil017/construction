@@ -80,7 +80,11 @@ export function useGenerateRun() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: GenerateRunInput) =>
-      apiFetch<SalaryRunDetail>("/salary/runs", { method: "POST", body: JSON.stringify(body) }),
+      apiFetch<SalaryRunDetail>("/salary/runs", {
+        method: "POST",
+        body: JSON.stringify(body),
+        idempotent: true,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       // Generation settles advances → refresh attendance/advances views too.
@@ -108,6 +112,7 @@ export function usePayItem() {
       apiFetch<SalaryRunItem>(`/salary/runs/${runId}/items/${itemId}/pay`, {
         method: "POST",
         body: JSON.stringify(body),
+        idempotent: true,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });

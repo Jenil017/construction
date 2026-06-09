@@ -14,6 +14,7 @@ import { writeAudit } from "../../common/audit";
 import { type DbClient, getDb } from "../../common/db";
 import { ConflictError, NotFoundError, ValidationError } from "../../common/errors";
 import { getRequestMeta } from "../../common/http/request-meta";
+import { idempotency } from "../../common/idempotency";
 import { requireAuth } from "../../common/middleware/require-auth";
 import { requirePermission } from "../../common/middleware/require-permission";
 import { requireSiteContext } from "../../common/middleware/require-site-context";
@@ -191,8 +192,13 @@ const generateRunRoute = createRoute({
   tags: ["Salary"],
   summary: "Generate a salary run for a period",
   description:
-    "Permission: salary:create. Computes pay for every worker with APPROVED attendance in the period and settles their advances — all in one transaction. One run per (site, period).",
-  middleware: [requireAuth, requireSiteContext, requirePermission("salary", "create")] as const,
+    "Permission: salary:create. Computes pay for every worker with APPROVED attendance in the period and settles their advances — all in one transaction. One run per (site, period). Accepts an Idempotency-Key header for safe retries.",
+  middleware: [
+    requireAuth,
+    requireSiteContext,
+    requirePermission("salary", "create"),
+    idempotency(),
+  ] as const,
   request: {
     body: { content: { "application/json": { schema: generateRunBodySchema } }, required: true },
   },
@@ -525,8 +531,13 @@ const payItemRoute = createRoute({
   tags: ["Salary"],
   summary: "Record payment against a payslip",
   description:
-    "Permission: salary:update. Sets the cumulative amount paid; status becomes paid/partial/unpaid accordingly.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("salary", "update")] as const,
+    "Permission: salary:update. Sets the cumulative amount paid; status becomes paid/partial/unpaid accordingly. Accepts an Idempotency-Key header for safe retries.",
+  middleware: [
+    requireAuth,
+    requireSiteContext,
+    requirePermission("salary", "update"),
+    idempotency(),
+  ] as const,
   request: {
     params: runItemParamSchema,
     body: { content: { "application/json": { schema: payItemBodySchema } }, required: true },

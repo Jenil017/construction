@@ -110,7 +110,11 @@ export function useCreatePurchase() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreatePurchaseInput) =>
-      apiFetch<PurchaseDetail>("/purchases", { method: "POST", body: JSON.stringify(body) }),
+      apiFetch<PurchaseDetail>("/purchases", {
+        method: "POST",
+        body: JSON.stringify(body),
+        idempotent: true,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -131,6 +135,7 @@ export function useReceivePurchase() {
       apiFetch<PurchaseDetail>(`/purchases/${id}/receive`, {
         method: "POST",
         body: JSON.stringify({ items }),
+        idempotent: true,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
@@ -151,6 +156,7 @@ export function usePayPurchase() {
       apiFetch<Purchase>(`/purchases/${id}/pay`, {
         method: "POST",
         body: JSON.stringify({ amountPaid, paymentMode }),
+        idempotent: true,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });

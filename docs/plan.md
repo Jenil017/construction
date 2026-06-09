@@ -2,7 +2,7 @@
 
 This plan converts the finalized ERP stack into practical delivery phases.
 
-> **Progress:** Phase 0 ✅ · Phase 1 ✅ (2026-06-06) · Phase 2 ✅ (2026-06-06) · Phase 3 ✅ (2026-06-07) · **Refactor: Site-as-tenant ✅ (2026-06-07)** · Phase 4 ✅ (2026-06-07) · Phase 5 ✅ (2026-06-09) · Phase 6 ✅ (2026-06-09) · Phase 7 ✅ (2026-06-09) · Phase 8 ✅ (2026-06-09) · Phase 9 next. See `docs/progress.md` for the detailed log.
+> **Progress:** Phase 0 ✅ · Phase 1 ✅ (2026-06-06) · Phase 2 ✅ (2026-06-06) · Phase 3 ✅ (2026-06-07) · **Refactor: Site-as-tenant ✅ (2026-06-07)** · Phase 4 ✅ (2026-06-07) · Phase 5 ✅ (2026-06-09) · Phase 6 ✅ (2026-06-09) · Phase 7 ✅ (2026-06-09) · Phase 8 ✅ (2026-06-09) · Phase 9 ✅ (2026-06-09) — **all phases complete**. See `docs/progress.md` for the detailed log.
 >
 > **Model change (2026-06-07):** Company and Project were removed. **Site is now the top-level tenant boundary** — an owner holds many sites, each user has per-site, per-module access (read / read+write), and data is scoped to the active site (chosen via an `X-Site-Id` header / site switcher). References to "Company" / "Project" / company-wide "roles" in the phases below are superseded by the site model; treat `siteId` as the tenant key for Phase 4+.
 
@@ -199,28 +199,33 @@ Eight report types (`GET /reports/types`): `dpr_log`, `inventory_stock`, `stock_
 Phases 4–7. Note: prod Queues need a paid Workers plan; migration `0005` apply to Neon +
 the live smoke test are pending owner authorization. See `docs/progress.md`.
 
-## Phase 9: Performance, Security, And Production Readiness
+## Phase 9: Performance, Security, And Production Readiness — ✅ Completed (2026-06-09)
 
 Goals:
 
-- Add rate limiting.
-- Add Cloudflare Cache API where safe.
-- Add idempotency handling for critical operations.
-- Add retry strategies.
-- Add query optimization.
-- Add proper indexes.
-- Review audit trails.
-- Review soft deletes.
-- Review API documentation.
+- Add rate limiting. ✅ (login/refresh limits + a baseline global per-IP limiter; KV/DO upgrade documented)
+- Add Cloudflare Cache API where safe. ✅ (`edgeCache` mw on the non-tenant `/reports/types`)
+- Add idempotency handling for critical operations. ✅ (`Idempotency-Key` → `idempotency_keys`)
+- Add retry strategies. ✅ (queue retries from Phase 8 + idempotent retries here)
+- Add query optimization. ✅ (joins over N+1; reviewed in docs/security.md)
+- Add proper indexes. ✅ (tenant/date/status/FK + composite + partial uniques; reviewed)
+- Review audit trails. ✅ (no secrets/amounts — confirmed in the security review)
+- Review soft deletes. ✅ (business records soft-deleted; immutable ledgers documented)
+- Review API documentation. ✅ (Swagger covers all modules; Idempotency-Key noted on critical routes)
 
 Deliverables:
 
-- Rate limiting middleware
-- Idempotency middleware/service
-- Optimized indexes
-- Security review checklist
-- Production deployment checklist
-- Complete Swagger UI docs
+- Rate limiting middleware ✅ (`common/rate-limit`, applied globally + on auth)
+- Idempotency middleware/service ✅ (`common/idempotency` + `idempotency_keys`, migration `0006`)
+- Optimized indexes ✅ (reviewed; idempotency unique index added)
+- Security review checklist ✅ (`docs/security.md`)
+- Production deployment checklist ✅ (`docs/security.md`)
+- Complete Swagger UI docs ✅ (all 12 modules; critical routes document the Idempotency-Key header)
+
+Idempotency is enforced on payments, salary generation, stock movements, purchase
+creation/receipt, and export generation; the web client auto-sends a per-call key on
+those mutations. Remaining hardening (KV/DO rate limiting, idempotency TTL sweep,
+httpOnly token storage) is captured as post-MVP follow-ups in `docs/security.md`.
 
 ## Verification Standards
 

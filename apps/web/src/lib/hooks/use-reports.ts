@@ -70,7 +70,11 @@ export function useCreateExport() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateExportInput) =>
-      apiFetch<ExportJob>("/reports/exports", { method: "POST", body: JSON.stringify(body) }),
+      apiFetch<ExportJob>("/reports/exports", {
+        method: "POST",
+        body: JSON.stringify(body),
+        idempotent: true,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: [...KEY, "exports"] }),
   });
 }

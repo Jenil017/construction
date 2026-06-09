@@ -7,6 +7,7 @@ import { writeAudit } from "../../common/audit";
 import { type DbClient, getDb } from "../../common/db";
 import { ConflictError, NotFoundError, ValidationError } from "../../common/errors";
 import { getRequestMeta } from "../../common/http/request-meta";
+import { idempotency } from "../../common/idempotency";
 import { requireAuth } from "../../common/middleware/require-auth";
 import { requirePermission } from "../../common/middleware/require-permission";
 import { requireSiteContext } from "../../common/middleware/require-site-context";
@@ -554,8 +555,13 @@ const createMovementRoute = createRoute({
   tags: ["Inventory"],
   summary: "Record a stock movement",
   description:
-    "Permission: inventory:create. inward/outward/wastage take a positive quantity; adjustment takes newStock. Updates the material's stock in one transaction.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("inventory", "create")] as const,
+    "Permission: inventory:create. inward/outward/wastage take a positive quantity; adjustment takes newStock. Updates the material's stock in one transaction. Accepts an Idempotency-Key header for safe retries.",
+  middleware: [
+    requireAuth,
+    requireSiteContext,
+    requirePermission("inventory", "create"),
+    idempotency(),
+  ] as const,
   request: {
     body: { content: { "application/json": { schema: createMovementBodySchema } }, required: true },
   },

@@ -164,6 +164,7 @@ export function useCreateStockMovement() {
       apiFetch<StockMovement>("/inventory/movements", {
         method: "POST",
         body: JSON.stringify(body),
+        idempotent: true,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: INVENTORY_KEY }),
   });

@@ -19,6 +19,15 @@ export class ApiError extends Error {
 export interface ApiFetchOptions extends RequestInit {
   /** Skip the Authorization header and the auto-refresh retry (login/refresh/logout). */
   skipAuth?: boolean;
+  /**
+   * Send an `Idempotency-Key` header so the backend treats this as exactly-once
+   * (for payments, salary generation, stock movements, purchases, exports). A key
+   * is generated per call and stays stable across the internal token-refresh
+   * retry, so a retried request is not applied twice.
+   */
+  idempotent?: boolean;
+  /** Override the generated idempotency key (rarely needed). */
+  idempotencyKey?: string;
 }
 
 // Single-flight refresh: concurrent 401s share one refresh attempt.
@@ -96,5 +105,11 @@ async function request<T>(path: string, options: ApiFetchOptions, retry: boolean
  * hooks (useUsers, useRoles, …) call this rather than fetching inline.
  */
 export function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
-  return request<T>(path, options, true);
+  const { idempotent, idempotencyKey, ...rest } = options;
+  if (idempotent) {
+    // Generate the key once here so the refresh-retry reuses it (exactly-once).
+    const key = idempotencyKey ?? crypto.randomUUID();
+    rest.headers = { ...(rest.headers as Record<string, string>), "Idempotency-Key": key };
+  }
+  return request<T>(path, rest, true);
 }

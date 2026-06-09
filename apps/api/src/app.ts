@@ -5,6 +5,7 @@ import { requestId } from "hono/request-id";
 import { ValidationError } from "./common/errors";
 import { notFound, onError } from "./common/middleware/error-handler";
 import { loggerMiddleware } from "./common/middleware/logger";
+import { rateLimit } from "./common/rate-limit";
 import type { Env } from "./env";
 import { attendanceRoutes } from "./modules/attendance";
 import { authRoutes } from "./modules/auth";
@@ -44,6 +45,10 @@ export function createApp() {
       credentials: true,
     }),
   );
+  // Baseline best-effort global rate limit (per-IP, per-isolate). A blunt DoS guard
+  // on top of the tighter login/refresh limits; prod should back this with KV/Durable
+  // Objects for a hard cross-isolate limit (see docs/security.md).
+  app.use("*", rateLimit({ bucket: "global", limit: 600, windowMs: 60_000 }));
 
   // Feature modules.
   app.route("/", healthRoutes);

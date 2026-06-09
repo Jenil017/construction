@@ -27,6 +27,7 @@ import { writeAudit } from "../../common/audit";
 import { type DbClient, getDb } from "../../common/db";
 import { ConflictError, NotFoundError, ValidationError } from "../../common/errors";
 import { getRequestMeta } from "../../common/http/request-meta";
+import { idempotency } from "../../common/idempotency";
 import { requireAuth } from "../../common/middleware/require-auth";
 import { requirePermission } from "../../common/middleware/require-permission";
 import { requireSiteContext } from "../../common/middleware/require-site-context";
@@ -270,8 +271,13 @@ const createRouteDef = createRoute({
   tags: ["Purchases"],
   summary: "Create a purchase (with line items)",
   description:
-    "Permission: purchases:create. Lines may link a material so receiving inwards stock.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("purchases", "create")] as const,
+    "Permission: purchases:create. Lines may link a material so receiving inwards stock. Accepts an Idempotency-Key header for safe retries.",
+  middleware: [
+    requireAuth,
+    requireSiteContext,
+    requirePermission("purchases", "create"),
+    idempotency(),
+  ] as const,
   request: {
     body: { content: { "application/json": { schema: createPurchaseBodySchema } }, required: true },
   },
@@ -551,8 +557,13 @@ const receiveRoute = createRoute({
   tags: ["Purchases"],
   summary: "Receive goods against a purchase",
   description:
-    "Permission: purchases:update. Sets received quantities (only increases) and inwards material-linked lines into inventory in one transaction.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("purchases", "update")] as const,
+    "Permission: purchases:update. Sets received quantities (only increases) and inwards material-linked lines into inventory in one transaction. Accepts an Idempotency-Key header for safe retries.",
+  middleware: [
+    requireAuth,
+    requireSiteContext,
+    requirePermission("purchases", "update"),
+    idempotency(),
+  ] as const,
   request: {
     params: purchaseIdParamSchema,
     body: {
@@ -683,8 +694,13 @@ const payRoute = createRoute({
   tags: ["Purchases"],
   summary: "Record a supplier payment",
   description:
-    "Permission: purchases:update. Sets the cumulative amount paid; status becomes paid/partial/unpaid.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("purchases", "update")] as const,
+    "Permission: purchases:update. Sets the cumulative amount paid; status becomes paid/partial/unpaid. Accepts an Idempotency-Key header for safe retries.",
+  middleware: [
+    requireAuth,
+    requireSiteContext,
+    requirePermission("purchases", "update"),
+    idempotency(),
+  ] as const,
   request: {
     params: purchaseIdParamSchema,
     body: { content: { "application/json": { schema: payPurchaseBodySchema } }, required: true },

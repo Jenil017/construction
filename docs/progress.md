@@ -2,6 +2,71 @@
 
 Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 
+## Phase 9 — Performance, Security & Production Readiness ✅ (2026-06-09)
+
+The hardening phase. Centerpiece is the **idempotency middleware/service** (mandated by
+docs/architecter.md and deferred since Phase 5), plus an edge-cache for safe reference
+reads, a baseline global rate limit, an index/audit/soft-delete review, and the
+**security + production deployment checklists** (`docs/security.md`). Migration `0006`.
+
+### Decisions made
+- **Idempotency via an `Idempotency-Key` header + an `idempotency_keys` table**, scoped
+  per site (the tenant key). First request claims a row (`in_progress`) by racing on the
+  `(site_id, key)` unique index (`onConflictDoNothing`); on success the response
+  (status + JSON body) is stored (`completed`). A replay with the **same payload** returns
+  the stored response verbatim (`Idempotent-Replay: true`); a replay with a **different
+  payload or user** → `IDEMPOTENCY_CONFLICT`; a replay **while in progress** → conflict
+  ("retry shortly"). If the handler throws, the claim is released so a genuine retry can
+  proceed. `requestHash` is `sha256(method + path + body)`.
+- **Backward-compatible (enforce-when-present).** No key header → the middleware is a
+  no-op, so existing/other clients aren't broken. The web client opts in: `apiFetch` gains
+  an `idempotent` flag that generates a per-call key (stable across the internal
+  token-refresh retry), wired into the 7 critical mutations. Applied server-side to
+  **salary generate, salary pay, inventory movement, purchase create/receive/pay, and
+  report export** — exactly the docs/architecter.md "use idempotency keys for…" set.
+- **Cloudflare Cache API only for stable, non-tenant data.** New `edgeCache` middleware
+  (placed AFTER auth so it never bypasses a permission check) applied to `/reports/types`
+  only. Tenant/financial/auth responses are explicitly never cached.
+- **Rate limiting.** Kept the tight in-isolate login (10/min) / refresh (30/min) limits and
+  added a baseline global per-IP limiter (600/min) as a blunt DoS guard. Documented that a
+  hard cross-isolate limit needs **KV or a Durable Object** (post-MVP follow-up).
+- **Index / audit / soft-delete review** (written up in `docs/security.md`): tenant/date/
+  status/FK + composite + partial-unique indexes confirmed across modules; audit rows carry
+  no secrets/amounts; business records soft-deleted (ledgers intentionally immutable).
+- **Idempotency rows have no TTL/cleanup yet** and the claim isn't folded into the business
+  transaction (a crash between commit and response-store leaves a stuck `in_progress` row).
+  Documented as follow-ups — acceptable for MVP.
+
+### Delivered
+- **DB** (`packages/db`): `idempotency_keys` (site + user, key, method/path, requestHash,
+  status, statusCode, responseBody jsonb; `(site_id, idempotency_key)` unique + created
+  index). Migration `0006_remarkable_grandmaster.sql` (additive: 1 table, 2 FKs, 2 indexes).
+- **API** (`apps/api`): `common/idempotency` (the middleware/service); `common/cache`
+  (`edgeCache`); a baseline global `rateLimit` in `app.ts`; the 7 critical routes gated by
+  `idempotency()` with the `Idempotency-Key` header documented in their Swagger descriptions.
+- **Web** (`apps/web`): `apiFetch` `idempotent`/`idempotencyKey` options (per-call key,
+  stable across the refresh-retry) wired into the salary/inventory/purchase/report mutations.
+- **Docs**: `docs/security.md` — the security review checklist + the production deployment
+  checklist + the known post-MVP follow-ups.
+
+### Verification
+- `pnpm typecheck` (4 pkgs), `pnpm check` (Biome, 188 files), `pnpm build` (Next 14 routes +
+  API wrangler dry-run, queue handler + pdf-lib bundled) — **all pass**.
+- `pnpm db:generate` → `0006`; SQL reviewed (1 table, FKs, the `(site_id, key)` unique +
+  created index).
+- **Pending owner authorization** (the production-DB-migration gate): applying `0006` to
+  Neon (`pnpm db:migrate`) and the live `wrangler dev` smoke (create with a key → replay the
+  same key returns the stored response with `Idempotent-Replay: true`; changed payload →
+  `IDEMPOTENCY_CONFLICT`; `/reports/types` second hit served from cache). Not run without
+  sign-off.
+
+### Notes / follow-ups (tracked in `docs/security.md`)
+- KV/Durable-Object rate limiting (hard, cross-isolate).
+- Idempotency-key TTL/cleanup sweep + folding the claim into the business transaction.
+- httpOnly-cookie / BFF token storage (reduce XSS exposure of `localStorage` tokens).
+- True `.xlsx` exports, image compression/enhancement jobs, site-to-site transfers.
+- **MVP is feature-complete** — all 9 phases delivered.
+
 ## Phase 8 — Reports & Background Jobs ✅ (2026-06-09)
 
 A generic, queue-backed report export pipeline covering every operational module. A
@@ -107,7 +172,7 @@ job status; the client polls and downloads via a short-lived presigned URL. Migr
 | Phase 6 — Attendance & Salary | ✅ Completed | 2026-06-09 |
 | Phase 7 — Expenses, Purchases, Suppliers | ✅ Completed | 2026-06-09 |
 | Phase 8 — Reports & Background Jobs | ✅ Completed | 2026-06-09 |
-| Phase 9 — Performance, Security, Production | ⬜ Not started | — |
+| Phase 9 — Performance, Security, Production | ✅ Completed | 2026-06-09 |
 
 ---
 

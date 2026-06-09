@@ -4,9 +4,11 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { type SQL, and, asc, count, desc, eq, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { writeAudit } from "../../common/audit";
+import { edgeCache } from "../../common/cache";
 import { type DbClient, getDb } from "../../common/db";
 import { ConflictError, ExportError, NotFoundError } from "../../common/errors";
 import { getRequestMeta } from "../../common/http/request-meta";
+import { idempotency } from "../../common/idempotency";
 import { requireAuth } from "../../common/middleware/require-auth";
 import { requirePermission } from "../../common/middleware/require-permission";
 import { requireSiteContext } from "../../common/middleware/require-site-context";
@@ -117,7 +119,12 @@ const typesRoute = createRoute({
   tags: ["Reports"],
   summary: "List available report types",
   description: "Permission: reports:view. The catalog of datasets that can be exported.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("reports", "view")] as const,
+  middleware: [
+    requireAuth,
+    requireSiteContext,
+    requirePermission("reports", "view"),
+    edgeCache(3600),
+  ] as const,
   responses: {
     200: {
       description: "Report type catalog",
@@ -131,6 +138,7 @@ const typesRoute = createRoute({
 });
 
 reportRoutes.openapi(typesRoute, async (c) => {
+  // Static, non-tenant reference data → safe to edge-cache via the edgeCache mw.
   return c.json({ success: true as const, data: REPORT_TYPES }, 200);
 });
 
@@ -193,8 +201,13 @@ const createRouteDef = createRoute({
   tags: ["Reports"],
   summary: "Request a report export (PDF/CSV)",
   description:
-    "Permission: reports:export (plus view on the source module). Records the job and queues background generation; poll the job for status, then download when completed.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("reports", "export")] as const,
+    "Permission: reports:export (plus view on the source module). Records the job and queues background generation; poll the job for status, then download when completed. Accepts an Idempotency-Key header for safe retries.",
+  middleware: [
+    requireAuth,
+    requireSiteContext,
+    requirePermission("reports", "export"),
+    idempotency(),
+  ] as const,
   request: {
     body: { content: { "application/json": { schema: createExportBodySchema } }, required: true },
   },

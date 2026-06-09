@@ -12,7 +12,7 @@ Multi-tenant ERP for contractors and builders — site tracking, DPR, inventory,
 
 ## Status
 
-Phases 1–8 are complete: Foundation, Auth & RBAC, the Site-as-tenant model, and the operational modules — DPR, Inventory, Attendance & Salary, Expenses, Purchases/Suppliers, and **Reports** (queue-backed PDF/CSV exports via Cloudflare Queues + R2). Auth is custom email/password (JWT access + rotating refresh tokens with reuse detection) and permission-based, per-site RBAC; the first owner is created by `pnpm db:seed`, then provisions per-site members from the in-app **Settings** screens. Phase 9 (performance, security, production hardening) is next. See [`docs/progress.md`](./docs/progress.md).
+All 9 phases are complete: Foundation, Auth & RBAC, the Site-as-tenant model, the operational modules — DPR, Inventory, Attendance & Salary, Expenses, Purchases/Suppliers, **Reports** (queue-backed PDF/CSV exports via Cloudflare Queues + R2) — and production hardening (idempotency keys on critical operations, rate limiting, edge caching of safe reference data, and a security/production checklist in [`docs/security.md`](./docs/security.md)). Auth is custom email/password (JWT access + rotating refresh tokens with reuse detection) and permission-based, per-site RBAC; the first owner is created by `pnpm db:seed`, then provisions per-site members from the in-app **Settings** screens. See [`docs/progress.md`](./docs/progress.md).
 
 ## Prerequisites
 
