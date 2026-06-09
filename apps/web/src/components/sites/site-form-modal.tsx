@@ -13,6 +13,7 @@ import {
   useCreateSite,
   useUpdateSite,
 } from "@/lib/hooks/use-sites";
+import { MapPin } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface SiteFormModalProps {
@@ -91,6 +92,7 @@ export function SiteFormModal({ open, onClose, site }: SiteFormModalProps) {
     <Modal
       open={open}
       onClose={onClose}
+      icon={MapPin}
       title={isEdit ? "Edit site" : "New site"}
       description={isEdit ? site?.name : "Create a site. Add members from the Users page."}
       footer={

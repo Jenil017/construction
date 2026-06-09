@@ -12,6 +12,7 @@ import {
   useCreateMaterial,
   useUpdateMaterial,
 } from "@/lib/hooks/use-inventory";
+import { Package } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface MaterialFormModalProps {
@@ -124,6 +125,7 @@ export function MaterialFormModal({ open, onClose, material }: MaterialFormModal
     <Modal
       open={open}
       onClose={onClose}
+      icon={Package}
       title={isEdit ? "Edit material" : "New material"}
       description={isEdit ? material?.name : "Add a material to this site's inventory."}
       footer={

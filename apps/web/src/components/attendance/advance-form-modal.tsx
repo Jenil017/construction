@@ -2,11 +2,12 @@
 
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
+import { Field, FormRow } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
 import { ApiError } from "@/lib/api-client";
 import { type Worker, useCreateAdvance } from "@/lib/hooks/use-attendance";
+import { Banknote } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface AdvanceFormModalProps {
@@ -69,6 +70,7 @@ export function AdvanceFormModal({ open, onClose, workers, workerId }: AdvanceFo
     <Modal
       open={open}
       onClose={onClose}
+      icon={Banknote}
       title="Record advance"
       description="Advances are deducted from net pay at the next salary run."
       footer={
@@ -83,8 +85,7 @@ export function AdvanceFormModal({ open, onClose, workers, workerId }: AdvanceFo
       }
     >
       <div className="space-y-4">
-        <div className="space-y-1.5">
-          <Label htmlFor="adv-worker">Worker</Label>
+        <Field label="Worker" htmlFor="adv-worker" required>
           <Combobox
             id="adv-worker"
             options={workers.map((w) => ({
@@ -99,10 +100,9 @@ export function AdvanceFormModal({ open, onClose, workers, workerId }: AdvanceFo
             searchPlaceholder="Search workers…"
             emptyText="No workers yet."
           />
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="adv-amount">Amount (₹)</Label>
+        </Field>
+        <FormRow columns={2}>
+          <Field label="Amount (₹)" htmlFor="adv-amount" required>
             <Input
               id="adv-amount"
               type="number"
@@ -112,29 +112,29 @@ export function AdvanceFormModal({ open, onClose, workers, workerId }: AdvanceFo
               onChange={(e) => setAmount(e.target.value)}
               placeholder="e.g. 2000"
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="adv-date">Date</Label>
+          </Field>
+          <Field label="Date" htmlFor="adv-date">
             <Input
               id="adv-date"
               type="date"
               value={advanceDate}
               onChange={(e) => setAdvanceDate(e.target.value)}
             />
-          </div>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="adv-note">Note</Label>
+          </Field>
+        </FormRow>
+        <Field label="Note" htmlFor="adv-note">
           <Input
             id="adv-note"
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="Optional"
           />
-        </div>
+        </Field>
 
         {error ? (
-          <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
+          <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+            {error}
+          </div>
         ) : null}
       </div>
     </Modal>

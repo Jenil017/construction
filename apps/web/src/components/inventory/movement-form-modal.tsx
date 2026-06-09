@@ -11,6 +11,7 @@ import {
   type MovementType,
   useCreateStockMovement,
 } from "@/lib/hooks/use-inventory";
+import { ArrowRightLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface MovementFormModalProps {
@@ -111,6 +112,7 @@ export function MovementFormModal({ open, onClose, material }: MovementFormModal
     <Modal
       open={open}
       onClose={onClose}
+      icon={ArrowRightLeft}
       title="Record movement"
       description={`${material.name} · ${material.currentStock} ${material.unit} in stock`}
       footer={

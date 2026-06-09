@@ -12,6 +12,7 @@ import {
   useCreateSupplier,
   useUpdateSupplier,
 } from "@/lib/hooks/use-suppliers";
+import { Truck } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface SupplierFormModalProps {
@@ -79,6 +80,7 @@ export function SupplierFormModal({ open, onClose, supplier }: SupplierFormModal
     <Modal
       open={open}
       onClose={onClose}
+      icon={Truck}
       title={isEdit ? "Edit supplier" : "New supplier"}
       description={isEdit ? supplier?.name : "Add a supplier to this site."}
       footer={

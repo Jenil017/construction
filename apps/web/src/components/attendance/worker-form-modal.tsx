@@ -12,6 +12,7 @@ import {
   useCreateWorker,
   useUpdateWorker,
 } from "@/lib/hooks/use-attendance";
+import { HardHat } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface WorkerFormModalProps {
@@ -101,6 +102,7 @@ export function WorkerFormModal({ open, onClose, worker }: WorkerFormModalProps)
     <Modal
       open={open}
       onClose={onClose}
+      icon={HardHat}
       title={isEdit ? "Edit worker" : "New worker"}
       description={isEdit ? worker?.name : "Add a worker to this site."}
       footer={

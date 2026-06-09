@@ -15,7 +15,7 @@ import {
   useUpdateDpr,
   useUploadDprPhoto,
 } from "@/lib/hooks/use-dpr";
-import { Camera, ImagePlus, Loader2, X } from "lucide-react";
+import { Camera, ClipboardList, ImagePlus, Loader2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 interface DprFormModalProps {
@@ -185,6 +185,7 @@ export function DprFormModal({ open, onClose, dpr }: DprFormModalProps) {
     <Modal
       open={open}
       onClose={onClose}
+      icon={ClipboardList}
       title={isEdit ? "Edit report" : "New report"}
       description={isEdit ? dpr?.reportDate : "Record today's site progress with photos."}
       footer={

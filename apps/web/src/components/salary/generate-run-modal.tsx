@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
 import { ApiError } from "@/lib/api-client";
 import { useGenerateRun } from "@/lib/hooks/use-salary";
+import { Banknote } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface GenerateRunModalProps {
@@ -57,6 +58,7 @@ export function GenerateRunModal({ open, onClose, onGenerated }: GenerateRunModa
     <Modal
       open={open}
       onClose={onClose}
+      icon={Banknote}
       title="Generate salary run"
       description="Pay is computed from approved attendance in the period; advances are deducted."
       footer={

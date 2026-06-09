@@ -13,6 +13,7 @@ import {
   useUpdateUser,
 } from "@/lib/hooks/use-users";
 import type { AccessLevel, RbacModule } from "@construction-erp/shared";
+import { UserPlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 interface UserFormModalProps {
@@ -168,6 +169,8 @@ export function UserFormModal({ open, onClose, user }: UserFormModalProps) {
     <Modal
       open={open}
       onClose={onClose}
+      icon={UserPlus}
+      size="lg"
       title={isEdit ? "Edit member" : "Add member"}
       description={
         isEdit ? user?.email : "Add someone to this site (new or existing) and set their access."

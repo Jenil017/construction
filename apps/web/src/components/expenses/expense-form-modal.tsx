@@ -1,8 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Field, FormRow } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import { ApiError } from "@/lib/api-client";
@@ -13,6 +13,7 @@ import {
   useCreateExpense,
   useUpdateExpense,
 } from "@/lib/hooks/use-expenses";
+import { Receipt } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface ExpenseFormModalProps {
@@ -89,6 +90,7 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
     <Modal
       open={open}
       onClose={onClose}
+      icon={Receipt}
       title={isEdit ? "Edit expense" : "New expense"}
       description={isEdit ? "Only pending expenses can be edited." : "Record a site expense."}
       footer={
@@ -103,9 +105,8 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
       }
     >
       <div className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="exp-date">Date</Label>
+        <FormRow columns={2}>
+          <Field label="Date" htmlFor="exp-date">
             <Input
               id="exp-date"
               type="date"
@@ -113,9 +114,8 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
               value={expenseDate}
               onChange={(e) => setExpenseDate(e.target.value)}
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="exp-amount">Amount (₹)</Label>
+          </Field>
+          <Field label="Amount (₹)" htmlFor="exp-amount" required>
             <Input
               id="exp-amount"
               type="number"
@@ -125,9 +125,10 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
               onChange={(e) => setAmount(e.target.value)}
               placeholder="e.g. 1500"
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="exp-category">Category</Label>
+          </Field>
+        </FormRow>
+        <FormRow columns={2}>
+          <Field label="Category" htmlFor="exp-category" required>
             <Input
               id="exp-category"
               list="exp-categories"
@@ -140,9 +141,8 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
                 <option key={cat} value={cat} />
               ))}
             </datalist>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="exp-mode">Payment mode</Label>
+          </Field>
+          <Field label="Payment mode" htmlFor="exp-mode">
             <Select
               id="exp-mode"
               value={paymentMode}
@@ -154,39 +154,39 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
                 </option>
               ))}
             </Select>
-          </div>
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="exp-paidto">Paid to</Label>
-            <Input
-              id="exp-paidto"
-              value={paidTo}
-              onChange={(e) => setPaidTo(e.target.value)}
-              placeholder="Who was paid (optional)"
-            />
-          </div>
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="exp-desc">Description</Label>
-            <Input
-              id="exp-desc"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Optional"
-            />
-          </div>
-        </div>
+          </Field>
+        </FormRow>
+        <Field label="Paid to" htmlFor="exp-paidto">
+          <Input
+            id="exp-paidto"
+            value={paidTo}
+            onChange={(e) => setPaidTo(e.target.value)}
+            placeholder="Who was paid (optional)"
+          />
+        </Field>
+        <Field label="Description" htmlFor="exp-desc">
+          <Input
+            id="exp-desc"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Optional"
+          />
+        </Field>
 
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border/70 bg-muted/30 px-3 py-2.5 text-sm font-medium">
           <input
             type="checkbox"
             checked={isPettyCash}
             onChange={(e) => setIsPettyCash(e.target.checked)}
-            className="size-4 rounded border-input"
+            className="size-4"
           />
-          Petty cash
+          Mark as petty cash
         </label>
 
         {error ? (
-          <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
+          <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+            {error}
+          </div>
         ) : null}
       </div>
     </Modal>

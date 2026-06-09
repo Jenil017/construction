@@ -2,15 +2,15 @@
 
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
+import { Field, FormRow, FormSection } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import { ApiError } from "@/lib/api-client";
 import { useMaterials } from "@/lib/hooks/use-inventory";
 import { type CreatePurchaseInput, useCreatePurchase } from "@/lib/hooks/use-purchases";
 import { useSuppliers } from "@/lib/hooks/use-suppliers";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, ShoppingCart, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 interface PurchaseFormModalProps {
@@ -160,6 +160,8 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
     <Modal
       open={open}
       onClose={onClose}
+      icon={ShoppingCart}
+      size="lg"
       title="New purchase"
       description="Create a purchase order with line items."
       footer={
@@ -173,10 +175,9 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
         </>
       }
     >
-      <div className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="po-supplier">Supplier</Label>
+      <div className="space-y-6">
+        <FormSection title="Order details">
+          <Field label="Supplier" htmlFor="po-supplier" required>
             <Combobox
               id="po-supplier"
               options={(suppliers ?? []).map((s) => ({ value: s.id, label: s.name }))}
@@ -186,57 +187,60 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
               searchPlaceholder="Search suppliers…"
               emptyText="No suppliers yet."
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="po-number">PO number</Label>
-            <Input
-              id="po-number"
-              value={poNumber}
-              onChange={(e) => setPoNumber(e.target.value)}
-              placeholder="Optional"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="po-status">Status</Label>
-            <Select
-              id="po-status"
-              value={status}
-              onChange={(e) => setStatus(e.target.value as "draft" | "ordered")}
-            >
-              <option value="ordered">Ordered</option>
-              <option value="draft">Draft</option>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="po-date">Order date</Label>
-            <Input
-              id="po-date"
-              type="date"
-              value={orderDate}
-              onChange={(e) => setOrderDate(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="po-expected">Expected date</Label>
-            <Input
-              id="po-expected"
-              type="date"
-              value={expectedDate}
-              onChange={(e) => setExpectedDate(e.target.value)}
-            />
-          </div>
-        </div>
+          </Field>
+          <FormRow columns={2}>
+            <Field label="PO number" htmlFor="po-number">
+              <Input
+                id="po-number"
+                value={poNumber}
+                onChange={(e) => setPoNumber(e.target.value)}
+                placeholder="Optional"
+              />
+            </Field>
+            <Field label="Status" htmlFor="po-status">
+              <Select
+                id="po-status"
+                value={status}
+                onChange={(e) => setStatus(e.target.value as "draft" | "ordered")}
+              >
+                <option value="ordered">Ordered</option>
+                <option value="draft">Draft</option>
+              </Select>
+            </Field>
+            <Field label="Order date" htmlFor="po-date">
+              <Input
+                id="po-date"
+                type="date"
+                value={orderDate}
+                onChange={(e) => setOrderDate(e.target.value)}
+              />
+            </Field>
+            <Field label="Expected date" htmlFor="po-expected">
+              <Input
+                id="po-expected"
+                type="date"
+                value={expectedDate}
+                onChange={(e) => setExpectedDate(e.target.value)}
+              />
+            </Field>
+          </FormRow>
+        </FormSection>
 
-        <div className="space-y-2">
+        <FormSection>
           <div className="flex items-center justify-between">
-            <Label>Line items</Label>
+            <h3 className="text-[0.78rem] font-bold uppercase tracking-[0.05em] text-foreground/55">
+              Line items
+            </h3>
             <Button type="button" variant="outline" size="sm" onClick={addLine}>
               <Plus className="size-4" />
               Add line
             </Button>
           </div>
           {lines.map((l) => (
-            <div key={l.key} className="space-y-2 rounded-lg border p-3">
+            <div
+              key={l.key}
+              className="space-y-2 rounded-lg border border-border/70 bg-muted/20 p-3"
+            >
               <div className="flex items-center gap-2">
                 <Combobox
                   className="flex-1"
@@ -290,23 +294,24 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
               </p>
             </div>
           ))}
-          <div className="flex justify-end text-sm font-medium tabular-nums">
-            Total: ₹{total.toFixed(2)}
+          <div className="flex justify-end border-t border-border/70 pt-2.5 text-sm font-semibold">
+            <span className="nums">Total: ₹{total.toFixed(2)}</span>
           </div>
-        </div>
+        </FormSection>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="po-notes">Notes</Label>
+        <Field label="Notes" htmlFor="po-notes">
           <Input
             id="po-notes"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Optional"
           />
-        </div>
+        </Field>
 
         {error ? (
-          <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
+          <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+            {error}
+          </div>
         ) : null}
       </div>
     </Modal>
