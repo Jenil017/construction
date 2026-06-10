@@ -28,14 +28,14 @@ export interface PurchaseItem {
 export interface Purchase {
   id: string;
   siteId: string;
-  supplierId: string;
-  supplierName: string | null;
+  sellerName: string | null;
   poNumber: string | null;
   orderDate: string;
   expectedDate: string | null;
   status: PurchaseStatus;
   notes: string | null;
   total: number;
+  taxAmount: number;
   amountPaid: number;
   paymentStatus: PurchasePaymentStatus;
   paymentMode: string | null;
@@ -56,22 +56,26 @@ export interface PurchaseLineInput {
 }
 
 export interface CreatePurchaseInput {
-  supplierId: string;
+  sellerName: string;
   poNumber?: string | null;
   orderDate?: string;
   expectedDate?: string | null;
   notes?: string | null;
   status?: "draft" | "ordered";
+  taxAmount?: number;
+  paymentMode?: string | null;
   items: PurchaseLineInput[];
 }
 
 export interface UpdatePurchaseInput {
-  supplierId?: string;
+  sellerName?: string;
   poNumber?: string | null;
   orderDate?: string;
   expectedDate?: string | null;
   notes?: string | null;
   status?: "draft" | "ordered" | "cancelled";
+  taxAmount?: number;
+  paymentMode?: string | null;
   items?: PurchaseLineInput[];
 }
 
@@ -79,7 +83,6 @@ export interface PurchaseListParams {
   search?: string;
   status?: PurchaseStatus;
   paymentStatus?: PurchasePaymentStatus;
-  supplierId?: string;
 }
 
 const KEY = ["purchases"] as const;
@@ -92,7 +95,6 @@ export function usePurchases(params: PurchaseListParams = {}) {
       if (params.search) qs.set("search", params.search);
       if (params.status) qs.set("status", params.status);
       if (params.paymentStatus) qs.set("paymentStatus", params.paymentStatus);
-      if (params.supplierId) qs.set("supplierId", params.supplierId);
       return apiFetch<Purchase[]>(`/purchases?${qs.toString()}`);
     },
   });
@@ -139,7 +141,6 @@ export function useReceivePurchase() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
-      // Receiving inwards stock → refresh inventory views.
       qc.invalidateQueries({ queryKey: ["inventory"] });
     },
   });

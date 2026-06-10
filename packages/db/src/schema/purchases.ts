@@ -21,9 +21,8 @@ export const purchases = pgTable(
     siteId: uuid("site_id")
       .notNull()
       .references(() => sites.id, { onDelete: "cascade" }),
-    supplierId: uuid("supplier_id")
-      .notNull()
-      .references(() => suppliers.id),
+    supplierId: uuid("supplier_id").references(() => suppliers.id),
+    sellerName: varchar("seller_name", { length: 160 }),
     poNumber: varchar("po_number", { length: 40 }),
     orderDate: date("order_date").notNull(),
     expectedDate: date("expected_date"),
@@ -35,6 +34,7 @@ export const purchases = pgTable(
     // unpaid | partial | paid
     paymentStatus: varchar("payment_status", { length: 12 }).notNull().default("unpaid"),
     paymentMode: varchar("payment_mode", { length: 40 }),
+    taxAmount: numeric("tax_amount", { precision: 14, scale: 2 }).notNull().default("0"),
     createdByUserId: uuid("created_by_user_id")
       .notNull()
       .references(() => users.id),

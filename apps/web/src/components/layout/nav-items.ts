@@ -7,8 +7,8 @@ import {
   type LucideIcon,
   MapPin,
   Receipt,
+  ShoppingBag,
   ShoppingCart,
-  Truck,
   UserCog,
   Users,
   Wallet,
@@ -38,7 +38,6 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Inventory", href: "/inventory", icon: Boxes, module: "inventory", action: "view" },
   { label: "Attendance", href: "/attendance", icon: Users, module: "attendance", action: "view" },
   { label: "Salary", href: "/salary", icon: Wallet, module: "salary", action: "view" },
-  { label: "Expenses", href: "/expenses", icon: Receipt, module: "expenses", action: "view" },
   {
     label: "Purchases",
     href: "/purchases",
@@ -46,7 +45,14 @@ export const NAV_ITEMS: NavItem[] = [
     module: "purchases",
     action: "view",
   },
-  { label: "Suppliers", href: "/suppliers", icon: Truck, module: "suppliers", action: "view" },
+  {
+    label: "Selling",
+    href: "/selling",
+    icon: ShoppingBag,
+    module: "selling",
+    action: "view",
+  },
+  { label: "Expenses", href: "/expenses", icon: Receipt, module: "expenses", action: "view" },
   { label: "Reports", href: "/reports", icon: FileText, module: "reports", action: "view" },
 ];
 

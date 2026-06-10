@@ -163,8 +163,8 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
     <Modal
       open={!!purchaseId}
       onClose={onClose}
-      title={po?.poNumber ? `PO ${po.poNumber}` : "Purchase"}
-      description={po ? (po.supplierName ?? undefined) : undefined}
+      title={po?.poNumber ? `Ref. ${po.poNumber}` : "Purchase"}
+      description={po ? (po.sellerName ?? undefined) : undefined}
       footer={footer}
     >
       {isLoading || !po ? (
@@ -185,6 +185,9 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {[
               { label: "Total", value: `₹${po.total}` },
+              ...(po.taxAmount > 0
+                ? [{ label: "Tax / GST", value: `₹${po.taxAmount.toFixed(2)}` }]
+                : []),
               { label: "Paid", value: `₹${po.amountPaid}` },
               { label: "Balance", value: `₹${(po.total - po.amountPaid).toFixed(2)}` },
             ].map((s) => (
@@ -347,7 +350,7 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            This sets the cumulative amount paid to the supplier.
+            This sets the cumulative amount paid to the seller.
           </p>
           {error ? (
             <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>

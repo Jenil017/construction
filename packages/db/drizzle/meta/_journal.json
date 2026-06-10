@@ -50,6 +50,27 @@
       "when": 1781022957608,
       "tag": "0006_remarkable_grandmaster",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781109055328,
+      "tag": "0007_workable_lady_mastermind",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1781109812705,
+      "tag": "0008_brave_ironclad",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1781111338955,
+      "tag": "0009_uneven_forgotten_one",
+      "breakpoints": true
     }
   ]
 }

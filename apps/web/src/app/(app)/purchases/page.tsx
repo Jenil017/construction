@@ -59,7 +59,7 @@ export default function PurchasesPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Purchases</h1>
           <p className="text-sm text-muted-foreground">
-            Purchase orders, goods receipt, and supplier payments.
+            Purchase orders, goods receipt, and seller payments.
           </p>
         </div>
         {canCreate ? (
@@ -110,13 +110,13 @@ export default function PurchasesPage() {
                   >
                     <div className="min-w-0 flex-1 space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="truncate font-medium">{p.supplierName ?? "—"}</span>
+                        <span className="truncate font-medium">{p.sellerName ?? "—"}</span>
                         <Badge variant={STATUS_VARIANT[p.status]}>
                           {p.status.replace("_", " ")}
                         </Badge>
                       </div>
                       <p className="truncate text-sm text-muted-foreground">
-                        {p.poNumber ? `PO ${p.poNumber} · ` : ""}₹{p.total} · {p.orderDate}
+                        {p.poNumber ? `Ref. ${p.poNumber} · ` : ""}₹{p.total} · {p.orderDate}
                       </p>
                     </div>
                     <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
@@ -130,8 +130,8 @@ export default function PurchasesPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Supplier</TableHead>
-                    <TableHead>PO #</TableHead>
+                    <TableHead>Seller</TableHead>
+                    <TableHead>Ref. / Bill</TableHead>
                     <TableHead>Order date</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Payment</TableHead>
@@ -146,8 +146,10 @@ export default function PurchasesPage() {
                       className="cursor-pointer"
                       onClick={() => setDetailId(p.id)}
                     >
-                      <TableCell className="font-medium">{p.supplierName ?? "—"}</TableCell>
-                      <TableCell className="text-muted-foreground">{p.poNumber ?? "—"}</TableCell>
+                      <TableCell className="font-medium">{p.sellerName ?? "—"}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {p.poNumber ? `Ref. ${p.poNumber}` : "—"}
+                      </TableCell>
                       <TableCell className="text-muted-foreground">{p.orderDate}</TableCell>
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[p.status]}>

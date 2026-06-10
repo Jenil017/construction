@@ -3,7 +3,6 @@ import {
   purchaseItems,
   purchases,
   stockMovements,
-  suppliers,
   users,
 } from "@construction-erp/db/schema";
 import { apiErrorSchema, apiSuccessSchema, buildPaginationMeta } from "@construction-erp/shared";
@@ -57,14 +56,14 @@ const today = () => new Date().toISOString().slice(0, 10);
 interface PurchaseRow {
   id: string;
   siteId: string;
-  supplierId: string;
-  supplierName: string | null;
+  sellerName: string | null;
   poNumber: string | null;
   orderDate: string;
   expectedDate: string | null;
   status: string;
   notes: string | null;
   total: string;
+  taxAmount: string;
   amountPaid: string;
   paymentStatus: string;
   paymentMode: string | null;
@@ -76,14 +75,14 @@ interface PurchaseRow {
 const purchaseColumns = {
   id: purchases.id,
   siteId: purchases.siteId,
-  supplierId: purchases.supplierId,
-  supplierName: suppliers.name,
+  sellerName: purchases.sellerName,
   poNumber: purchases.poNumber,
   orderDate: purchases.orderDate,
   expectedDate: purchases.expectedDate,
   status: purchases.status,
   notes: purchases.notes,
   total: purchases.total,
+  taxAmount: purchases.taxAmount,
   amountPaid: purchases.amountPaid,
   paymentStatus: purchases.paymentStatus,
   paymentMode: purchases.paymentMode,
@@ -96,14 +95,14 @@ function serializePurchase(row: PurchaseRow) {
   return {
     id: row.id,
     siteId: row.siteId,
-    supplierId: row.supplierId,
-    supplierName: row.supplierName ?? null,
+    sellerName: row.sellerName,
     poNumber: row.poNumber,
     orderDate: row.orderDate,
     expectedDate: row.expectedDate,
     status: row.status as (typeof PURCHASE_STATUSES)[number],
     notes: row.notes,
     total: Number(row.total),
+    taxAmount: Number(row.taxAmount ?? 0),
     amountPaid: Number(row.amountPaid),
     paymentStatus: row.paymentStatus as (typeof PURCHASE_PAYMENT_STATUSES)[number],
     paymentMode: row.paymentMode,
@@ -156,7 +155,6 @@ async function loadPurchaseJoined(db: DbClient, filters: SQL[]) {
   const [row] = await db
     .select(purchaseColumns)
     .from(purchases)
-    .leftJoin(suppliers, eq(suppliers.id, purchases.supplierId))
     .leftJoin(creator, eq(creator.id, purchases.createdByUserId))
     .where(and(...filters))
     .limit(1);
@@ -207,8 +205,7 @@ const listRoute = createRoute({
   path: "/purchases",
   tags: ["Purchases"],
   summary: "List purchases for the active site",
-  description:
-    "Permission: purchases:view. Filter by search, status, payment status, supplier, dates.",
+  description: "Permission: purchases:view. Filter by search, status, payment status, dates.",
   middleware: [requireAuth, requireSiteContext, requirePermission("purchases", "view")] as const,
   request: { query: listPurchasesQuerySchema },
   responses: {
@@ -224,7 +221,7 @@ const listRoute = createRoute({
 });
 
 purchaseRoutes.openapi(listRoute, async (c) => {
-  const { page, pageSize, sortOrder, search, status, paymentStatus, supplierId, dateFrom, dateTo } =
+  const { page, pageSize, sortOrder, search, status, paymentStatus, dateFrom, dateTo } =
     c.req.valid("query");
   const auth = c.get("auth");
   const db = getDb(c);
@@ -233,12 +230,15 @@ purchaseRoutes.openapi(listRoute, async (c) => {
   const filters = [eq(purchases.siteId, siteId), isNull(purchases.deletedAt)];
   if (status) filters.push(eq(purchases.status, status));
   if (paymentStatus) filters.push(eq(purchases.paymentStatus, paymentStatus));
-  if (supplierId) filters.push(eq(purchases.supplierId, supplierId));
   if (dateFrom) filters.push(gte(purchases.orderDate, dateFrom));
   if (dateTo) filters.push(lte(purchases.orderDate, dateTo));
   if (search) {
     const pattern = `%${search}%`;
-    const term = or(ilike(purchases.poNumber, pattern), ilike(purchases.notes, pattern));
+    const term = or(
+      ilike(purchases.poNumber, pattern),
+      ilike(purchases.sellerName, pattern),
+      ilike(purchases.notes, pattern),
+    );
     if (term) filters.push(term);
   }
   const whereClause = and(...filters);
@@ -250,7 +250,6 @@ purchaseRoutes.openapi(listRoute, async (c) => {
   const rows = await db
     .select(purchaseColumns)
     .from(purchases)
-    .leftJoin(suppliers, eq(suppliers.id, purchases.supplierId))
     .leftJoin(creator, eq(creator.id, purchases.createdByUserId))
     .where(whereClause)
     .orderBy(dir(purchases.orderDate), dir(purchases.createdAt))
@@ -294,10 +293,6 @@ const createRouteDef = createRoute({
       description: "Permission denied",
       content: { "application/json": { schema: apiErrorSchema } },
     },
-    404: {
-      description: "Supplier not found",
-      content: { "application/json": { schema: apiErrorSchema } },
-    },
   },
 });
 
@@ -307,19 +302,6 @@ purchaseRoutes.openapi(createRouteDef, async (c) => {
   const db = getDb(c);
   const meta = getRequestMeta(c);
   const siteId = auth.siteId as string;
-
-  const [supplier] = await db
-    .select({ id: suppliers.id })
-    .from(suppliers)
-    .where(
-      and(
-        eq(suppliers.id, body.supplierId),
-        eq(suppliers.siteId, siteId),
-        isNull(suppliers.deletedAt),
-      ),
-    )
-    .limit(1);
-  if (!supplier) throw new NotFoundError("Supplier not found.");
 
   const materialIds = body.items
     .map((i) => i.materialId)
@@ -338,20 +320,24 @@ purchaseRoutes.openapi(createRouteDef, async (c) => {
       amount: String(round2(quantity * rate)),
     };
   });
-  const total = round2(lines.reduce((s, l) => s + Number(l.amount), 0));
+  const subtotal = round2(lines.reduce((s, l) => s + Number(l.amount), 0));
+  const taxAmt = round2(body.taxAmount ?? 0);
+  const total = round2(subtotal + taxAmt);
 
   const id = await db.transaction(async (tx) => {
     const [po] = await tx
       .insert(purchases)
       .values({
         siteId,
-        supplierId: body.supplierId,
+        sellerName: body.sellerName,
         poNumber: body.poNumber ?? null,
         orderDate: body.orderDate ?? today(),
         expectedDate: body.expectedDate ?? null,
-        status: body.status ?? "draft",
+        status: body.status ?? "ordered",
         notes: body.notes ?? null,
         total: String(total),
+        taxAmount: String(taxAmt),
+        paymentMode: body.paymentMode ?? null,
         createdByUserId: auth.userId,
       })
       .returning();
@@ -366,7 +352,7 @@ purchaseRoutes.openapi(createRouteDef, async (c) => {
       action: "create",
       entityType: "purchase",
       entityId: po.id,
-      after: { supplierId: body.supplierId, status: po.status, lines: lines.length },
+      after: { sellerName: body.sellerName, status: po.status, lines: lines.length },
       ip: meta.ip,
       userAgent: meta.userAgent,
       requestId: meta.requestId,
@@ -466,20 +452,6 @@ purchaseRoutes.openapi(updateRouteDef, async (c) => {
   if (body.items && existing.status !== "draft") {
     throw new ConflictError("Line items can only be changed while the purchase is a draft.");
   }
-  if (body.supplierId) {
-    const [supplier] = await db
-      .select({ id: suppliers.id })
-      .from(suppliers)
-      .where(
-        and(
-          eq(suppliers.id, body.supplierId),
-          eq(suppliers.siteId, siteId),
-          isNull(suppliers.deletedAt),
-        ),
-      )
-      .limit(1);
-    if (!supplier) throw new NotFoundError("Supplier not found.");
-  }
 
   let newLines:
     | {
@@ -511,13 +483,25 @@ purchaseRoutes.openapi(updateRouteDef, async (c) => {
   }
 
   const updates: Record<string, unknown> = {};
-  if (body.supplierId !== undefined) updates.supplierId = body.supplierId;
+  if (body.sellerName !== undefined) updates.sellerName = body.sellerName;
   if (body.poNumber !== undefined) updates.poNumber = body.poNumber;
   if (body.orderDate !== undefined) updates.orderDate = body.orderDate;
   if (body.expectedDate !== undefined) updates.expectedDate = body.expectedDate;
   if (body.notes !== undefined) updates.notes = body.notes;
   if (body.status !== undefined) updates.status = body.status;
-  if (newLines) updates.total = String(round2(newLines.reduce((s, l) => s + Number(l.amount), 0)));
+  if (body.paymentMode !== undefined) updates.paymentMode = body.paymentMode;
+  if (body.taxAmount !== undefined) {
+    updates.taxAmount = String(round2(body.taxAmount));
+  }
+  if (newLines) {
+    const subtotal = round2(newLines.reduce((s, l) => s + Number(l.amount), 0));
+    const taxAmt =
+      body.taxAmount !== undefined ? round2(body.taxAmount) : Number(existing.taxAmount ?? 0);
+    updates.total = String(round2(subtotal + taxAmt));
+  } else if (body.taxAmount !== undefined) {
+    const subtotal = round2(Number(existing.total) - Number(existing.taxAmount ?? 0));
+    updates.total = String(round2(subtotal + round2(body.taxAmount)));
+  }
 
   await db.transaction(async (tx) => {
     if (newLines) {
@@ -610,7 +594,6 @@ purchaseRoutes.openapi(receiveRoute, async (c) => {
       if (req === undefined) continue;
       const quantity = Number(item.quantity);
       const current = Number(item.receivedQty);
-      // Received only increases, and never beyond the ordered quantity.
       const next = Math.min(Math.max(req, current), quantity);
       const delta = round3(next - current);
       if (delta <= 0) continue;
@@ -654,7 +637,6 @@ purchaseRoutes.openapi(receiveRoute, async (c) => {
       }
     }
 
-    // Recompute the purchase status from received vs ordered quantities.
     const fresh = await tx.select().from(purchaseItems).where(eq(purchaseItems.purchaseId, id));
     const anyReceived = fresh.some((i) => Number(i.receivedQty) > 0);
     const allReceived = fresh.every((i) => Number(i.receivedQty) >= Number(i.quantity));
@@ -687,12 +669,12 @@ purchaseRoutes.openapi(receiveRoute, async (c) => {
   return c.json({ success: true as const, data: { ...header, items: result } }, 200);
 });
 
-// ─── Record supplier payment ─────────────────────────────────────────────────────────
+// ─── Record seller payment ─────────────────────────────────────────────────────────
 const payRoute = createRoute({
   method: "post",
   path: "/purchases/{id}/pay",
   tags: ["Purchases"],
-  summary: "Record a supplier payment",
+  summary: "Record a seller payment",
   description:
     "Permission: purchases:update. Sets the cumulative amount paid; status becomes paid/partial/unpaid. Accepts an Idempotency-Key header for safe retries.",
   middleware: [
@@ -755,7 +737,6 @@ purchaseRoutes.openapi(payRoute, async (c) => {
       action: "update",
       entityType: "purchase_payment",
       entityId: id,
-      // No amount in the audit trail (sensitive payment data).
       after: { paymentStatus, paymentMode: body.paymentMode ?? null },
       ip: meta.ip,
       userAgent: meta.userAgent,

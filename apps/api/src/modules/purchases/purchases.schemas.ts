@@ -41,14 +41,14 @@ export const purchaseSchema = z
   .object({
     id: z.string().uuid(),
     siteId: z.string().uuid(),
-    supplierId: z.string().uuid(),
-    supplierName: z.string().nullable(),
+    sellerName: z.string().nullable(),
     poNumber: z.string().nullable(),
     orderDate: z.string(),
     expectedDate: z.string().nullable(),
     status: z.enum(PURCHASE_STATUSES),
     notes: z.string().nullable(),
     total: z.number(),
+    taxAmount: z.number(),
     amountPaid: z.number(),
     paymentStatus: z.enum(PURCHASE_PAYMENT_STATUSES),
     paymentMode: z.string().nullable(),
@@ -62,10 +62,9 @@ export const purchaseDetailSchema = purchaseSchema
   .openapi("PurchaseDetail");
 
 export const listPurchasesQuerySchema = paginationQuerySchema.extend({
-  search: z.string().optional().openapi({ description: "Match PO number or notes." }),
+  search: z.string().optional().openapi({ description: "Match PO number, seller name, or notes." }),
   status: z.enum(PURCHASE_STATUSES).optional(),
   paymentStatus: z.enum(PURCHASE_PAYMENT_STATUSES).optional(),
-  supplierId: z.string().uuid().optional(),
   dateFrom: z.string().regex(DATE_RE).optional(),
   dateTo: z.string().regex(DATE_RE).optional(),
 });
@@ -80,24 +79,28 @@ const itemInputSchema = z.object({
 
 export const createPurchaseBodySchema = z
   .object({
-    supplierId: z.string().uuid(),
+    sellerName: z.string().min(1).max(160),
     poNumber: z.string().max(40).nullable().optional(),
     orderDate: z.string().regex(DATE_RE).optional(),
     expectedDate: z.string().regex(DATE_RE).nullable().optional(),
     notes: z.string().max(2000).nullable().optional(),
     status: z.enum(["draft", "ordered"]).optional(),
+    taxAmount: z.number().nonnegative().optional(),
+    paymentMode: z.string().max(40).nullable().optional(),
     items: z.array(itemInputSchema).min(1).max(200),
   })
   .openapi("CreatePurchaseRequest");
 
 export const updatePurchaseBodySchema = z
   .object({
-    supplierId: z.string().uuid().optional(),
+    sellerName: z.string().min(1).max(160).optional(),
     poNumber: z.string().max(40).nullable().optional(),
     orderDate: z.string().regex(DATE_RE).optional(),
     expectedDate: z.string().regex(DATE_RE).nullable().optional(),
     notes: z.string().max(2000).nullable().optional(),
     status: z.enum(["draft", "ordered", "cancelled"]).optional(),
+    taxAmount: z.number().nonnegative().optional(),
+    paymentMode: z.string().max(40).nullable().optional(),
     /** Replaces all line items — allowed only while the purchase is a draft. */
     items: z.array(itemInputSchema).min(1).max(200).optional(),
   })

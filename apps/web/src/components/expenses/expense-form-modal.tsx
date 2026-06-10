@@ -23,7 +23,32 @@ interface ExpenseFormModalProps {
 }
 
 const MODES = ["Cash", "UPI", "Bank transfer", "Cheque"];
-const CATEGORIES = ["Fuel", "Food", "Transport", "Tools", "Labour", "Office", "Miscellaneous"];
+const CATEGORIES = [
+  // Site operations
+  "Fuel",
+  "Generator fuel",
+  "Equipment hire",
+  "Tools & Small equipment",
+  "Repairs & Maintenance",
+  "Site cleaning",
+  // Labour
+  "Labour (extra)",
+  "Skilled labour",
+  "Unskilled labour",
+  "Subcontractor payment",
+  // Logistics
+  "Transport",
+  "Vehicle hire",
+  "Loading / unloading",
+  // Site overhead
+  "Food & Tea",
+  "Safety & PPE",
+  "Permit & License",
+  "Medical & First aid",
+  "Office & Stationery",
+  // Other
+  "Miscellaneous",
+];
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
