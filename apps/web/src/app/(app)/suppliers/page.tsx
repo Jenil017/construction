@@ -58,7 +58,7 @@ export default function SuppliersPage() {
           </p>
         </div>
         {canCreate ? (
-          <Button onClick={openCreate} className="w-full sm:w-auto">
+          <Button onClick={openCreate} className="shrink-0">
             <Plus className="size-4" />
             Add supplier
           </Button>

@@ -51,6 +51,7 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState("kg");
   const [ratePerUnit, setRatePerUnit] = useState("");
+  const [amountReceived, setAmountReceived] = useState("");
   const [buyerName, setBuyerName] = useState("");
   const [buyerContact, setBuyerContact] = useState("");
   const [paymentMode, setPaymentMode] = useState("Cash");
@@ -71,6 +72,7 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
     setQuantity(sale?.quantity != null ? String(sale.quantity) : "");
     setUnit(sale?.unit ?? "kg");
     setRatePerUnit(sale?.ratePerUnit != null ? String(sale.ratePerUnit) : "");
+    setAmountReceived("");
     setBuyerName(sale?.buyerName ?? "");
     setBuyerContact(sale?.buyerContact ?? "");
     setPaymentMode(sale?.paymentMode ?? "Cash");
@@ -97,6 +99,7 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
       setError("Enter a valid rate per unit (can be 0 for donated/disposed items).");
       return;
     }
+    const received = Number(amountReceived) || 0;
     const body: CreateSaleInput & UpdateSaleInput = {
       saleDate,
       itemDescription: itemDescription.trim(),
@@ -104,9 +107,10 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
       quantity: qty,
       unit,
       ratePerUnit: rate,
-      buyerName: buyerName.trim(),
+      buyerName: buyerName.trim() || null,
       buyerContact: buyerContact.trim() || null,
       paymentMode,
+      ...(!isEdit && received > 0 ? { amountReceived: received } : {}),
       notes: notes.trim() || null,
     };
 
@@ -127,9 +131,7 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
       onClose={onClose}
       icon={ShoppingBag}
       title={isEdit ? "Edit sale record" : "New sale record"}
-      description={
-        isEdit ? "Only draft sale records can be edited." : "Record a material sold from the site."
-      }
+      description={isEdit ? "Update sale details." : "Record a material sold from the site."}
       footer={
         <>
           <Button variant="outline" onClick={onClose} disabled={busy}>
@@ -242,19 +244,34 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
           </Field>
         </FormRow>
 
-        <Field label="Payment mode" htmlFor="sale-mode">
-          <Select
-            id="sale-mode"
-            value={paymentMode}
-            onChange={(e) => setPaymentMode(e.target.value)}
-          >
-            {PAYMENT_MODES.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </Select>
-        </Field>
+        <FormRow columns={2}>
+          <Field label="Payment mode" htmlFor="sale-mode">
+            <Select
+              id="sale-mode"
+              value={paymentMode}
+              onChange={(e) => setPaymentMode(e.target.value)}
+            >
+              {PAYMENT_MODES.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {!isEdit ? (
+            <Field label="Amount received so far (₹)" htmlFor="sale-received">
+              <Input
+                id="sale-received"
+                type="number"
+                min="0"
+                step="any"
+                value={amountReceived}
+                onChange={(e) => setAmountReceived(e.target.value)}
+                placeholder="0 — enter if already received"
+              />
+            </Field>
+          ) : null}
+        </FormRow>
 
         <Field label="Notes" htmlFor="sale-notes">
           <Input

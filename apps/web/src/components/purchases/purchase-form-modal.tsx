@@ -69,8 +69,8 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
   const [sellerName, setSellerName] = useState("");
   const [poNumber, setPoNumber] = useState("");
   const [orderDate, setOrderDate] = useState(today());
-  const [expectedDate, setExpectedDate] = useState("");
   const [paymentMode, setPaymentMode] = useState("Cash");
+  const [amountPaid, setAmountPaid] = useState("");
   const [taxAmount, setTaxAmount] = useState("");
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<LineDraft[]>([emptyLine(0)]);
@@ -82,8 +82,8 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
     setSellerName("");
     setPoNumber("");
     setOrderDate(today());
-    setExpectedDate("");
     setPaymentMode("Cash");
+    setAmountPaid("");
     setTaxAmount("");
     setNotes("");
     setLines([emptyLine(0)]);
@@ -161,14 +161,14 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
       return;
     }
 
+    const paid = Number(amountPaid) || 0;
     const body: CreatePurchaseInput = {
       sellerName: sellerName.trim(),
       poNumber: poNumber.trim() || null,
       orderDate,
-      expectedDate: expectedDate || null,
       notes: notes.trim() || null,
-      status: "ordered",
       taxAmount: tax > 0 ? tax : undefined,
+      amountPaid: paid > 0 ? paid : undefined,
       paymentMode: paymentMode || null,
       items,
     };
@@ -241,12 +241,15 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
                 placeholder="Seller's bill or invoice no. (optional)"
               />
             </Field>
-            <Field label="Expected delivery" htmlFor="po-expected">
+            <Field label="Amount paid so far (₹)" htmlFor="po-paid">
               <Input
-                id="po-expected"
-                type="date"
-                value={expectedDate}
-                onChange={(e) => setExpectedDate(e.target.value)}
+                id="po-paid"
+                type="number"
+                min="0"
+                step="any"
+                value={amountPaid}
+                onChange={(e) => setAmountPaid(e.target.value)}
+                placeholder="0 — enter if already paid"
               />
             </Field>
           </FormRow>

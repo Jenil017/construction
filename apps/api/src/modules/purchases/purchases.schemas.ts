@@ -82,10 +82,9 @@ export const createPurchaseBodySchema = z
     sellerName: z.string().min(1).max(160),
     poNumber: z.string().max(40).nullable().optional(),
     orderDate: z.string().regex(DATE_RE).optional(),
-    expectedDate: z.string().regex(DATE_RE).nullable().optional(),
     notes: z.string().max(2000).nullable().optional(),
-    status: z.enum(["draft", "ordered"]).optional(),
     taxAmount: z.number().nonnegative().optional(),
+    amountPaid: z.number().nonnegative().optional(),
     paymentMode: z.string().max(40).nullable().optional(),
     items: z.array(itemInputSchema).min(1).max(200),
   })

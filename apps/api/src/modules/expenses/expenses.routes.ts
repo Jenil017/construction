@@ -212,6 +212,7 @@ expenseRoutes.openapi(createRouteDef, async (c) => {
         paidTo: body.paidTo ?? null,
         paymentMode: body.paymentMode ?? null,
         isPettyCash: body.isPettyCash ?? false,
+        status: "approved",
         createdByUserId: auth.userId,
       })
       .returning();
@@ -312,9 +313,6 @@ expenseRoutes.openapi(updateRouteDef, async (c) => {
 
   const existing = await loadRawExpense(db, siteId, id);
   if (!existing) throw new NotFoundError("Expense not found.");
-  if (existing.status !== "pending") {
-    throw new ConflictError("Only pending expenses can be edited.");
-  }
 
   const updates: Record<string, unknown> = {};
   if (body.expenseDate !== undefined) updates.expenseDate = body.expenseDate;

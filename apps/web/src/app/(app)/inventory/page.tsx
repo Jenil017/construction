@@ -4,8 +4,8 @@ import { MaterialDetailModal } from "@/components/inventory/material-detail-moda
 import { MaterialFormModal } from "@/components/inventory/material-form-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FilterDrawer, type FilterValues } from "@/components/ui/filter-drawer";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -24,7 +24,7 @@ import { useState } from "react";
 export default function InventoryPage() {
   const { can } = useAuth();
   const [search, setSearch] = useState("");
-  const [lowOnly, setLowOnly] = useState<"all" | "low_stock">("all");
+  const [filters, setFilters] = useState<FilterValues>({});
   const {
     data: materials,
     isLoading,
@@ -32,7 +32,7 @@ export default function InventoryPage() {
     refetch,
   } = useMaterials({
     search: search || undefined,
-    status: lowOnly === "low_stock" ? "low_stock" : undefined,
+    status: filters.stockStatus === "low_stock" ? "low_stock" : undefined,
   });
   const deleteMaterial = useDeleteMaterial();
 
@@ -72,16 +72,15 @@ export default function InventoryPage() {
           </p>
         </div>
         {canCreate ? (
-          <Button onClick={openCreate} className="w-full sm:w-auto">
+          <Button onClick={openCreate} className="shrink-0">
             <Plus className="size-4" />
             Add material
           </Button>
         ) : null}
       </div>
 
-      {/* Filters: stack on mobile, inline from sm up. */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <div className="relative sm:max-w-xs sm:flex-1">
+        <div className="relative flex-1 sm:max-w-xs">
           <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
           <Input
             value={search}
@@ -90,14 +89,18 @@ export default function InventoryPage() {
             className="pl-8"
           />
         </div>
-        <Select
-          value={lowOnly}
-          onChange={(e) => setLowOnly(e.target.value as "all" | "low_stock")}
-          className="sm:w-auto"
-        >
-          <option value="all">All materials</option>
-          <option value="low_stock">Low stock only</option>
-        </Select>
+        <FilterDrawer
+          fields={[
+            {
+              type: "select",
+              key: "stockStatus",
+              label: "Stock status",
+              options: [{ value: "low_stock", label: "Low stock only" }],
+            },
+          ]}
+          values={filters}
+          onChange={setFilters}
+        />
       </div>
 
       <div className="overflow-hidden rounded-xl border bg-card">

@@ -59,10 +59,9 @@ export interface CreatePurchaseInput {
   sellerName: string;
   poNumber?: string | null;
   orderDate?: string;
-  expectedDate?: string | null;
   notes?: string | null;
-  status?: "draft" | "ordered";
   taxAmount?: number;
+  amountPaid?: number;
   paymentMode?: string | null;
   items: PurchaseLineInput[];
 }
@@ -83,6 +82,8 @@ export interface PurchaseListParams {
   search?: string;
   status?: PurchaseStatus;
   paymentStatus?: PurchasePaymentStatus;
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 const KEY = ["purchases"] as const;
@@ -95,6 +96,8 @@ export function usePurchases(params: PurchaseListParams = {}) {
       if (params.search) qs.set("search", params.search);
       if (params.status) qs.set("status", params.status);
       if (params.paymentStatus) qs.set("paymentStatus", params.paymentStatus);
+      if (params.dateFrom) qs.set("dateFrom", params.dateFrom);
+      if (params.dateTo) qs.set("dateTo", params.dateTo);
       return apiFetch<Purchase[]>(`/purchases?${qs.toString()}`);
     },
   });

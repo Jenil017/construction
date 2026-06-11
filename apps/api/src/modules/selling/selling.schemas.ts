@@ -78,7 +78,7 @@ export const createSaleBodySchema = z
   .object({
     saleDate: z.string().regex(DATE_RE).optional(),
     ...saleFields,
-    status: z.enum(["draft", "confirmed"]).optional(),
+    amountReceived: z.number().nonnegative().optional(),
   })
   .openapi("CreateSaleRequest");
 

@@ -323,6 +323,9 @@ purchaseRoutes.openapi(createRouteDef, async (c) => {
   const subtotal = round2(lines.reduce((s, l) => s + Number(l.amount), 0));
   const taxAmt = round2(body.taxAmount ?? 0);
   const total = round2(subtotal + taxAmt);
+  const amtPaid = round2(body.amountPaid ?? 0);
+  const paymentStatus: "unpaid" | "partial" | "paid" =
+    amtPaid <= 0 ? "unpaid" : amtPaid >= total ? "paid" : "partial";
 
   const id = await db.transaction(async (tx) => {
     const [po] = await tx
@@ -332,18 +335,57 @@ purchaseRoutes.openapi(createRouteDef, async (c) => {
         sellerName: body.sellerName,
         poNumber: body.poNumber ?? null,
         orderDate: body.orderDate ?? today(),
-        expectedDate: body.expectedDate ?? null,
-        status: body.status ?? "ordered",
+        expectedDate: null,
+        status: "received",
         notes: body.notes ?? null,
         total: String(total),
         taxAmount: String(taxAmt),
+        amountPaid: String(amtPaid),
+        paymentStatus,
         paymentMode: body.paymentMode ?? null,
         createdByUserId: auth.userId,
       })
       .returning();
     if (!po) throw new ConflictError("Could not create the purchase. Please try again.");
 
-    await tx.insert(purchaseItems).values(lines.map((l) => ({ ...l, siteId, purchaseId: po.id })));
+    // Items are fully received on entry — mark receivedQty = quantity
+    await tx
+      .insert(purchaseItems)
+      .values(lines.map((l) => ({ ...l, siteId, purchaseId: po.id, receivedQty: l.quantity })));
+
+    // Auto-inward stock for every material-linked line
+    for (const line of lines) {
+      if (!line.materialId) continue;
+      const [mat] = await tx
+        .select()
+        .from(materials)
+        .where(
+          and(
+            eq(materials.id, line.materialId),
+            eq(materials.siteId, siteId),
+            isNull(materials.deletedAt),
+          ),
+        )
+        .limit(1);
+      if (!mat) continue;
+      const qty = Number(line.quantity);
+      const balanceAfter = round3(Number(mat.currentStock) + qty);
+      await tx.insert(stockMovements).values({
+        siteId,
+        materialId: mat.id,
+        type: "inward",
+        quantity: line.quantity,
+        balanceAfter: String(balanceAfter),
+        unitCost: line.rate,
+        reference: body.poNumber ? `PO ${body.poNumber}` : "Purchase",
+        movementDate: body.orderDate ?? today(),
+        createdByUserId: auth.userId,
+      });
+      await tx
+        .update(materials)
+        .set({ currentStock: String(balanceAfter), unitCost: line.rate })
+        .where(eq(materials.id, mat.id));
+    }
 
     await writeAudit(tx, {
       siteId,
@@ -352,7 +394,7 @@ purchaseRoutes.openapi(createRouteDef, async (c) => {
       action: "create",
       entityType: "purchase",
       entityId: po.id,
-      after: { sellerName: body.sellerName, status: po.status, lines: lines.length },
+      after: { sellerName: body.sellerName, status: "received", lines: lines.length },
       ip: meta.ip,
       userAgent: meta.userAgent,
       requestId: meta.requestId,
@@ -785,9 +827,6 @@ purchaseRoutes.openapi(deleteRouteDef, async (c) => {
 
   const existing = await loadPurchaseRow(db, siteId, id);
   if (!existing) throw new NotFoundError("Purchase not found.");
-  if (existing.status === "received" || existing.status === "partially_received") {
-    throw new ConflictError("Goods were received against this purchase — it cannot be deleted.");
-  }
 
   await db.transaction(async (tx) => {
     await tx.update(purchases).set({ deletedAt: new Date() }).where(eq(purchases.id, id));

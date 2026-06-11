@@ -4,7 +4,7 @@ import { PurchaseDetailModal } from "@/components/purchases/purchase-detail-moda
 import { PurchaseFormModal } from "@/components/purchases/purchase-form-modal";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
+import { FilterDrawer, type FilterValues } from "@/components/ui/filter-drawer";
 import {
   Table,
   TableBody,
@@ -17,19 +17,26 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { useOpenOnParam } from "@/lib/hooks/use-open-on-param";
 import {
   type PurchasePaymentStatus,
-  type PurchaseStatus,
   usePurchases,
 } from "@/lib/hooks/use-purchases";
 import { ChevronRight, Loader2, Plus } from "lucide-react";
 import { useState } from "react";
 
-const STATUS_VARIANT: Record<PurchaseStatus, BadgeProps["variant"]> = {
-  draft: "outline",
-  ordered: "brand",
-  partially_received: "warning",
-  received: "success",
-  cancelled: "danger",
-};
+const FILTER_FIELDS = [
+  {
+    type: "select" as const,
+    key: "paymentStatus",
+    label: "Payment status",
+    options: [
+      { value: "unpaid", label: "Unpaid" },
+      { value: "partial", label: "Partially paid" },
+      { value: "paid", label: "Paid" },
+    ],
+  },
+  { type: "date" as const, key: "dateFrom", label: "From date" },
+  { type: "date" as const, key: "dateTo", label: "To date" },
+];
+
 const PAY_VARIANT: Record<PurchasePaymentStatus, BadgeProps["variant"]> = {
   unpaid: "outline",
   partial: "warning",
@@ -38,14 +45,16 @@ const PAY_VARIANT: Record<PurchasePaymentStatus, BadgeProps["variant"]> = {
 
 export default function PurchasesPage() {
   const { can } = useAuth();
-  const [status, setStatus] = useState<"all" | PurchaseStatus>("all");
+  const [filters, setFilters] = useState<FilterValues>({});
   const {
     data: purchases,
     isLoading,
     isError,
     refetch,
   } = usePurchases({
-    status: status === "all" ? undefined : status,
+    paymentStatus: (filters.paymentStatus as PurchasePaymentStatus) || undefined,
+    dateFrom: filters.dateFrom || undefined,
+    dateTo: filters.dateTo || undefined,
   });
   const [formOpen, setFormOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -59,29 +68,20 @@ export default function PurchasesPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Purchases</h1>
           <p className="text-sm text-muted-foreground">
-            Purchase orders, goods receipt, and seller payments.
+            Record purchases made — items, amounts, and payments.
           </p>
         </div>
         {canCreate ? (
-          <Button onClick={() => setFormOpen(true)} className="w-full sm:w-auto">
+          <Button onClick={() => setFormOpen(true)} className="shrink-0">
             <Plus className="size-4" />
             New purchase
           </Button>
         ) : null}
       </div>
 
-      <Select
-        value={status}
-        onChange={(e) => setStatus(e.target.value as "all" | PurchaseStatus)}
-        className="sm:w-56"
-      >
-        <option value="all">All statuses</option>
-        <option value="draft">Draft</option>
-        <option value="ordered">Ordered</option>
-        <option value="partially_received">Partially received</option>
-        <option value="received">Received</option>
-        <option value="cancelled">Cancelled</option>
-      </Select>
+      <div className="flex justify-end">
+        <FilterDrawer fields={FILTER_FIELDS} values={filters} onChange={setFilters} />
+      </div>
 
       <div className="overflow-hidden rounded-xl border bg-card">
         {isLoading ? (
@@ -111,9 +111,7 @@ export default function PurchasesPage() {
                     <div className="min-w-0 flex-1 space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="truncate font-medium">{p.sellerName ?? "—"}</span>
-                        <Badge variant={STATUS_VARIANT[p.status]}>
-                          {p.status.replace("_", " ")}
-                        </Badge>
+                        <Badge variant={PAY_VARIANT[p.paymentStatus]}>{p.paymentStatus}</Badge>
                       </div>
                       <p className="truncate text-sm text-muted-foreground">
                         {p.poNumber ? `Ref. ${p.poNumber} · ` : ""}₹{p.total} · {p.orderDate}
@@ -132,8 +130,7 @@ export default function PurchasesPage() {
                   <TableRow>
                     <TableHead>Seller</TableHead>
                     <TableHead>Ref. / Bill</TableHead>
-                    <TableHead>Order date</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead>Date</TableHead>
                     <TableHead>Payment</TableHead>
                     <TableHead className="text-right">Total</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -151,11 +148,6 @@ export default function PurchasesPage() {
                         {p.poNumber ? `Ref. ${p.poNumber}` : "—"}
                       </TableCell>
                       <TableCell className="text-muted-foreground">{p.orderDate}</TableCell>
-                      <TableCell>
-                        <Badge variant={STATUS_VARIANT[p.status]}>
-                          {p.status.replace("_", " ")}
-                        </Badge>
-                      </TableCell>
                       <TableCell>
                         <Badge variant={PAY_VARIANT[p.paymentStatus]}>{p.paymentStatus}</Badge>
                       </TableCell>

@@ -4,8 +4,8 @@ import { DprDetailModal } from "@/components/dpr/dpr-detail-modal";
 import { DprFormModal } from "@/components/dpr/dpr-form-modal";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FilterDrawer, type FilterValues } from "@/components/ui/filter-drawer";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -30,8 +30,7 @@ const STATUS_META: Record<DprStatus, { label: string; variant: BadgeProps["varia
 export default function DprPage() {
   const { can } = useAuth();
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | DprStatus>("all");
-  const [date, setDate] = useState("");
+  const [filters, setFilters] = useState<FilterValues>({});
   const {
     data: reports,
     isLoading,
@@ -39,8 +38,8 @@ export default function DprPage() {
     refetch,
   } = useDprList({
     search: search || undefined,
-    status: statusFilter === "all" ? undefined : statusFilter,
-    date: date || undefined,
+    status: (filters.status as DprStatus) || undefined,
+    date: filters.date || undefined,
   });
   const deleteDpr = useDeleteDpr();
 
@@ -84,16 +83,15 @@ export default function DprPage() {
           </p>
         </div>
         {canCreate ? (
-          <Button onClick={openCreate} className="w-full sm:w-auto">
+          <Button onClick={openCreate} className="shrink-0">
             <Plus className="size-4" />
             New report
           </Button>
         ) : null}
       </div>
 
-      {/* Filters: stack on mobile, inline from sm up. */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <div className="relative sm:max-w-xs sm:flex-1">
+        <div className="relative flex-1 sm:max-w-xs">
           <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
           <Input
             value={search}
@@ -102,24 +100,23 @@ export default function DprPage() {
             className="pl-8"
           />
         </div>
-        <div className="flex gap-2">
-          <Input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="flex-1 sm:w-auto sm:flex-none"
-          />
-          <Select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as "all" | DprStatus)}
-            className="flex-1 sm:w-auto sm:flex-none"
-          >
-            <option value="all">All statuses</option>
-            <option value="draft">Draft</option>
-            <option value="submitted">Submitted</option>
-            <option value="approved">Approved</option>
-          </Select>
-        </div>
+        <FilterDrawer
+          fields={[
+            {
+              type: "select",
+              key: "status",
+              label: "Status",
+              options: [
+                { value: "draft", label: "Draft" },
+                { value: "submitted", label: "Submitted" },
+                { value: "approved", label: "Approved" },
+              ],
+            },
+            { type: "date", key: "date", label: "Report date" },
+          ]}
+          values={filters}
+          onChange={setFilters}
+        />
       </div>
 
       <div className="overflow-hidden rounded-xl border bg-card">

@@ -18,12 +18,9 @@ import { ApiError } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth/auth-context";
 import {
   type PurchasePaymentStatus,
-  type PurchaseStatus,
   useDeletePurchase,
   usePayPurchase,
   usePurchase,
-  useReceivePurchase,
-  useUpdatePurchase,
 } from "@/lib/hooks/use-purchases";
 import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -33,13 +30,6 @@ interface PurchaseDetailModalProps {
   onClose: () => void;
 }
 
-const STATUS_VARIANT: Record<PurchaseStatus, BadgeProps["variant"]> = {
-  draft: "outline",
-  ordered: "brand",
-  partially_received: "warning",
-  received: "success",
-  cancelled: "danger",
-};
 const PAY_VARIANT: Record<PurchasePaymentStatus, BadgeProps["variant"]> = {
   unpaid: "outline",
   partial: "warning",
@@ -50,13 +40,10 @@ const MODES = ["Cash", "Bank transfer", "UPI", "Cheque"];
 export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModalProps) {
   const { can } = useAuth();
   const { data: po, isLoading } = usePurchase(purchaseId);
-  const receivePurchase = useReceivePurchase();
   const payPurchase = usePayPurchase();
-  const updatePurchase = useUpdatePurchase();
   const deletePurchase = useDeletePurchase();
 
-  const [mode, setMode] = useState<"view" | "receive" | "pay">("view");
-  const [receiveQty, setReceiveQty] = useState<Record<string, string>>({});
+  const [showPay, setShowPay] = useState(false);
   const [amountPaid, setAmountPaid] = useState("");
   const [paymentMode, setPaymentMode] = useState("Cash");
   const [error, setError] = useState<string | null>(null);
@@ -65,34 +52,15 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
   const canDelete = can("purchases", "delete");
 
   useEffect(() => {
-    setMode("view");
+    setShowPay(false);
     setError(null);
-  }, []);
+  }, [purchaseId]);
 
   useEffect(() => {
-    if (mode === "receive" && po) {
-      const init: Record<string, string> = {};
-      for (const it of po.items) init[it.id] = String(it.pending > 0 ? it.pending : 0);
-      setReceiveQty(init);
-    }
-    if (mode === "pay" && po) setAmountPaid(String(po.total));
-  }, [mode, po]);
+    if (showPay && po) setAmountPaid(String(po.total));
+  }, [showPay, po]);
 
-  const busy =
-    receivePurchase.isPending ||
-    payPurchase.isPending ||
-    updatePurchase.isPending ||
-    deletePurchase.isPending;
-
-  const setStatus = async (status: "ordered" | "cancelled") => {
-    if (!po) return;
-    if (status === "cancelled" && !window.confirm("Cancel this purchase?")) return;
-    try {
-      await updatePurchase.mutateAsync({ id: po.id, body: { status } });
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not update the purchase.");
-    }
-  };
+  const busy = payPurchase.isPending || deletePurchase.isPending;
 
   const onDelete = async () => {
     if (!po) return;
@@ -102,28 +70,6 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
       onClose();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not delete the purchase.");
-    }
-  };
-
-  const submitReceive = async () => {
-    if (!po) return;
-    setError(null);
-    const items = po.items
-      .map((it) => {
-        const now = Number(receiveQty[it.id]) || 0;
-        return { itemId: it.id, receivedQty: it.receivedQty + now, now };
-      })
-      .filter((x) => x.now > 0)
-      .map(({ itemId, receivedQty }) => ({ itemId, receivedQty }));
-    if (items.length === 0) {
-      setError("Enter a quantity to receive on at least one line.");
-      return;
-    }
-    try {
-      await receivePurchase.mutateAsync({ id: po.id, items });
-      setMode("view");
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not receive goods.");
     }
   };
 
@@ -137,27 +83,26 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
     }
     try {
       await payPurchase.mutateAsync({ id: po.id, amountPaid: amt, paymentMode });
-      setMode("view");
+      setShowPay(false);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not record the payment.");
     }
   };
 
-  const footer =
-    mode === "view" ? (
-      <Button variant="outline" onClick={onClose}>
-        Close
+  const footer = !showPay ? (
+    <Button variant="outline" onClick={onClose}>
+      Close
+    </Button>
+  ) : (
+    <>
+      <Button variant="outline" onClick={() => setShowPay(false)} disabled={busy}>
+        Back
       </Button>
-    ) : (
-      <>
-        <Button variant="outline" onClick={() => setMode("view")} disabled={busy}>
-          Back
-        </Button>
-        <Button onClick={mode === "receive" ? submitReceive : submitPay} disabled={busy}>
-          {busy ? "Saving…" : mode === "receive" ? "Receive" : "Record payment"}
-        </Button>
-      </>
-    );
+      <Button onClick={submitPay} disabled={busy}>
+        {busy ? "Saving…" : "Record payment"}
+      </Button>
+    </>
+  );
 
   return (
     <Modal
@@ -171,14 +116,13 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
         <div className="flex items-center justify-center py-12 text-muted-foreground">
           <Loader2 className="size-5 animate-spin" />
         </div>
-      ) : mode === "view" ? (
+      ) : !showPay ? (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <Badge variant={STATUS_VARIANT[po.status]}>{po.status.replace("_", " ")}</Badge>
             <Badge variant={PAY_VARIANT[po.paymentStatus]}>{po.paymentStatus}</Badge>
-            <span className="text-muted-foreground">Ordered {po.orderDate}</span>
-            {po.expectedDate ? (
-              <span className="text-muted-foreground">· expected {po.expectedDate}</span>
+            <span className="text-muted-foreground">Purchased {po.orderDate}</span>
+            {po.paymentMode ? (
+              <span className="text-muted-foreground">· {po.paymentMode}</span>
             ) : null}
           </div>
 
@@ -204,8 +148,6 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
                 <TableRow>
                   <TableHead>Item</TableHead>
                   <TableHead className="text-right">Qty</TableHead>
-                  <TableHead className="text-right">Recd</TableHead>
-                  <TableHead className="text-right">Pending</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
                 </TableRow>
               </TableHeader>
@@ -223,10 +165,6 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
                     <TableCell className="text-right tabular-nums">
                       {it.quantity} {it.unit ?? ""}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{it.receivedQty}</TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {it.pending}
-                    </TableCell>
                     <TableCell className="text-right tabular-nums">₹{it.amount}</TableCell>
                   </TableRow>
                 ))}
@@ -240,38 +178,12 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
 
           {canUpdate || canDelete ? (
             <div className="flex flex-wrap gap-2 border-t pt-3">
-              {canUpdate && po.status === "draft" ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setStatus("ordered")}
-                  disabled={busy}
-                >
-                  Place order
-                </Button>
-              ) : null}
-              {canUpdate && po.status !== "received" && po.status !== "cancelled" ? (
-                <Button variant="outline" size="sm" onClick={() => setMode("receive")}>
-                  Receive goods
-                </Button>
-              ) : null}
-              {canUpdate && po.status !== "cancelled" && po.amountPaid < po.total ? (
-                <Button variant="outline" size="sm" onClick={() => setMode("pay")}>
+              {canUpdate && po.amountPaid < po.total ? (
+                <Button variant="outline" size="sm" onClick={() => setShowPay(true)}>
                   Record payment
                 </Button>
               ) : null}
-              {canUpdate && (po.status === "draft" || po.status === "ordered") ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-danger hover:text-danger"
-                  onClick={() => setStatus("cancelled")}
-                  disabled={busy}
-                >
-                  Cancel order
-                </Button>
-              ) : null}
-              {canDelete && po.status !== "received" && po.status !== "partially_received" ? (
+              {canDelete ? (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -283,35 +195,6 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
                 </Button>
               ) : null}
             </div>
-          ) : null}
-        </div>
-      ) : mode === "receive" ? (
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Enter the quantity received now. Material-linked lines are added to inventory stock.
-          </p>
-          {po.items.map((it) => (
-            <div key={it.id} className="flex items-center gap-3 rounded-lg border p-3">
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{it.description}</p>
-                <p className="text-xs text-muted-foreground">
-                  {it.receivedQty}/{it.quantity} received · {it.pending} pending
-                </p>
-              </div>
-              <Input
-                type="number"
-                min="0"
-                max={it.pending}
-                step="any"
-                value={receiveQty[it.id] ?? ""}
-                onChange={(e) => setReceiveQty((q) => ({ ...q, [it.id]: e.target.value }))}
-                className="w-24"
-                disabled={it.pending <= 0}
-              />
-            </div>
-          ))}
-          {error ? (
-            <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
           ) : null}
         </div>
       ) : (

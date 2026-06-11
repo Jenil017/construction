@@ -34,7 +34,7 @@ export default function SalaryPage() {
           </p>
         </div>
         {canCreate ? (
-          <Button onClick={() => setGenerateOpen(true)} className="w-full sm:w-auto">
+          <Button onClick={() => setGenerateOpen(true)} className="shrink-0">
             <Plus className="size-4" />
             Generate run
           </Button>

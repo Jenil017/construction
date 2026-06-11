@@ -53,8 +53,8 @@ export interface CreateSaleInput {
   buyerName?: string | null;
   buyerContact?: string | null;
   paymentMode?: string | null;
+  amountReceived?: number;
   notes?: string | null;
-  status?: "draft" | "confirmed";
 }
 
 export type UpdateSaleInput = Partial<Omit<CreateSaleInput, "status">>;
@@ -95,17 +95,6 @@ export function useUpdateSale() {
   });
 }
 
-export function useConfirmSale() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, status }: { id: string; status: "confirmed" | "cancelled" }) =>
-      apiFetch<SiteSale>(`/selling/${id}/status`, {
-        method: "POST",
-        body: JSON.stringify({ status }),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
-  });
-}
 
 export function useRecordSalePayment() {
   const qc = useQueryClient();

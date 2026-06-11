@@ -223,6 +223,8 @@ sellingRoutes.openapi(createRouteDef, async (c) => {
   const qty = round3(body.quantity);
   const rate = round2(body.ratePerUnit);
   const total = round2(qty * rate);
+  const amtReceived = round2(body.amountReceived ?? 0);
+  const paymentStatus = derivePaymentStatus(total, amtReceived);
 
   const created = await db.transaction(async (tx) => {
     const [row] = await tx
@@ -240,8 +242,10 @@ sellingRoutes.openapi(createRouteDef, async (c) => {
         buyerName: body.buyerName ?? null,
         buyerContact: body.buyerContact ?? null,
         paymentMode: body.paymentMode ?? null,
+        amountReceived: String(amtReceived),
+        paymentStatus,
         notes: body.notes ?? null,
-        status: body.status ?? "draft",
+        status: "confirmed",
         createdByUserId: auth.userId,
       })
       .returning();
@@ -338,7 +342,6 @@ sellingRoutes.openapi(updateRouteDef, async (c) => {
 
   const existing = await loadRawSale(db, siteId, id);
   if (!existing) throw new NotFoundError("Sale not found.");
-  if (existing.status !== "draft") throw new ConflictError("Only draft sales can be edited.");
 
   const updates: Record<string, unknown> = {};
   if (body.saleDate !== undefined) updates.saleDate = body.saleDate;
@@ -357,7 +360,9 @@ sellingRoutes.openapi(updateRouteDef, async (c) => {
   if (body.quantity !== undefined) updates.quantity = String(newQty);
   if (body.ratePerUnit !== undefined) updates.ratePerUnit = String(newRate);
   if (body.quantity !== undefined || body.ratePerUnit !== undefined) {
-    updates.totalAmount = String(round2(newQty * newRate));
+    const newTotal = round2(newQty * newRate);
+    updates.totalAmount = String(newTotal);
+    updates.paymentStatus = derivePaymentStatus(newTotal, Number(existing.amountReceived));
   }
 
   await db.transaction(async (tx) => {

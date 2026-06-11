@@ -4,8 +4,8 @@ import { SaleFormModal } from "@/components/selling/sale-form-modal";
 import { SalePaymentModal } from "@/components/selling/sale-payment-modal";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FilterDrawer, type FilterValues } from "@/components/ui/filter-drawer";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -19,20 +19,12 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { useOpenOnParam } from "@/lib/hooks/use-open-on-param";
 import {
   type SalePaymentStatus,
-  type SaleStatus,
   type SiteSale,
-  useConfirmSale,
   useDeleteSale,
   useSales,
 } from "@/lib/hooks/use-selling";
 import { Loader2, Plus, Search, Trash2 } from "lucide-react";
 import { useState } from "react";
-
-const STATUS_VARIANT: Record<SaleStatus, BadgeProps["variant"]> = {
-  draft: "warning",
-  confirmed: "success",
-  cancelled: "danger",
-};
 
 const PAYMENT_VARIANT: Record<SalePaymentStatus, BadgeProps["variant"]> = {
   unpaid: "danger",
@@ -47,8 +39,7 @@ function fmt(n: number) {
 export default function SellingPage() {
   const { can } = useAuth();
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<"all" | SaleStatus>("all");
-  const [paymentStatus, setPaymentStatus] = useState<"all" | SalePaymentStatus>("all");
+  const [filters, setFilters] = useState<FilterValues>({});
 
   const {
     data: sales,
@@ -57,11 +48,11 @@ export default function SellingPage() {
     refetch,
   } = useSales({
     search: search || undefined,
-    status: status === "all" ? undefined : status,
-    paymentStatus: paymentStatus === "all" ? undefined : paymentStatus,
+    paymentStatus: (filters.paymentStatus as SalePaymentStatus) || undefined,
+    dateFrom: filters.dateFrom || undefined,
+    dateTo: filters.dateTo || undefined,
   });
 
-  const confirmSale = useConfirmSale();
   const deleteSale = useDeleteSale();
 
   const [formOpen, setFormOpen] = useState(false);
@@ -70,7 +61,6 @@ export default function SellingPage() {
 
   const canCreate = can("selling", "create");
   const canUpdate = can("selling", "update");
-  const canApprove = can("selling", "approve");
   const canDelete = can("selling", "delete");
 
   const openCreate = () => {
@@ -78,14 +68,6 @@ export default function SellingPage() {
     setFormOpen(true);
   };
   useOpenOnParam("new", canCreate, openCreate);
-
-  const confirm = async (s: SiteSale, next: "confirmed" | "cancelled") => {
-    try {
-      await confirmSale.mutateAsync({ id: s.id, status: next });
-    } catch (err) {
-      window.alert(err instanceof ApiError ? err.message : "Could not update the sale.");
-    }
-  };
 
   const onDelete = async (s: SiteSale) => {
     if (!window.confirm("Delete this sale record?")) return;
@@ -106,7 +88,7 @@ export default function SellingPage() {
           </p>
         </div>
         {canCreate ? (
-          <Button onClick={openCreate} className="w-full sm:w-auto">
+          <Button onClick={openCreate} className="shrink-0">
             <Plus className="size-4" />
             New sale record
           </Button>
@@ -114,7 +96,7 @@ export default function SellingPage() {
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <div className="relative sm:max-w-xs sm:flex-1">
+        <div className="relative flex-1 sm:max-w-xs">
           <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
           <Input
             value={search}
@@ -123,26 +105,24 @@ export default function SellingPage() {
             className="pl-8"
           />
         </div>
-        <Select
-          value={status}
-          onChange={(e) => setStatus(e.target.value as "all" | SaleStatus)}
-          className="sm:w-40"
-        >
-          <option value="all">All statuses</option>
-          <option value="draft">Draft</option>
-          <option value="confirmed">Confirmed</option>
-          <option value="cancelled">Cancelled</option>
-        </Select>
-        <Select
-          value={paymentStatus}
-          onChange={(e) => setPaymentStatus(e.target.value as "all" | SalePaymentStatus)}
-          className="sm:w-40"
-        >
-          <option value="all">All payments</option>
-          <option value="unpaid">Unpaid</option>
-          <option value="partial">Partial</option>
-          <option value="paid">Paid</option>
-        </Select>
+        <FilterDrawer
+          fields={[
+            {
+              type: "select",
+              key: "paymentStatus",
+              label: "Payment status",
+              options: [
+                { value: "unpaid", label: "Unpaid" },
+                { value: "partial", label: "Partially paid" },
+                { value: "paid", label: "Paid" },
+              ],
+            },
+            { type: "date", key: "dateFrom", label: "From date" },
+            { type: "date", key: "dateTo", label: "To date" },
+          ]}
+          values={filters}
+          onChange={setFilters}
+        />
       </div>
 
       <div className="overflow-hidden rounded-xl border bg-card">
@@ -173,7 +153,6 @@ export default function SellingPage() {
                   <TableHead className="text-right">Total</TableHead>
                   <TableHead>Buyer</TableHead>
                   <TableHead>Payment</TableHead>
-                  <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -193,36 +172,14 @@ export default function SellingPage() {
                     <TableCell>
                       <Badge variant={PAYMENT_VARIANT[s.paymentStatus]}>{s.paymentStatus}</Badge>
                     </TableCell>
-                    <TableCell>
-                      <Badge variant={STATUS_VARIANT[s.status]}>{s.status}</Badge>
-                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        {canApprove && s.status === "draft" ? (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => confirm(s, "confirmed")}
-                            >
-                              Confirm
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-danger hover:text-danger"
-                              onClick={() => confirm(s, "cancelled")}
-                            >
-                              Cancel
-                            </Button>
-                          </>
-                        ) : null}
-                        {canUpdate && s.status !== "cancelled" && s.paymentStatus !== "paid" ? (
+                        {canUpdate && s.paymentStatus !== "paid" ? (
                           <Button variant="ghost" size="sm" onClick={() => setPaymentSale(s)}>
                             Payment
                           </Button>
                         ) : null}
-                        {canUpdate && s.status === "draft" ? (
+                        {canUpdate ? (
                           <Button
                             variant="ghost"
                             size="sm"

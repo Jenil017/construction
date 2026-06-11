@@ -103,7 +103,7 @@ function WorkersTab({ canManage }: { canManage: CanFn }) {
     <div className="space-y-4">
       {canCreate ? (
         <div className="flex justify-end">
-          <Button onClick={openCreate} className="w-full sm:w-auto">
+          <Button onClick={openCreate} className="shrink-0">
             <Plus className="size-4" />
             Add worker
           </Button>
@@ -202,7 +202,7 @@ function AdvancesTab({ canManage }: { canManage: CanFn }) {
     <div className="space-y-4">
       {canCreate ? (
         <div className="flex justify-end">
-          <Button onClick={() => setFormOpen(true)} className="w-full sm:w-auto">
+          <Button onClick={() => setFormOpen(true)} className="shrink-0">
             <Plus className="size-4" />
             Record advance
           </Button>
