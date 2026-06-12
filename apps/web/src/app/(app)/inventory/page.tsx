@@ -149,7 +149,7 @@ export default function InventoryPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Material</TableHead>
+                    <TableHead className="w-full">Material</TableHead>
                     <TableHead>Category</TableHead>
                     <TableHead className="text-right">In stock</TableHead>
                     <TableHead>Reorder at</TableHead>

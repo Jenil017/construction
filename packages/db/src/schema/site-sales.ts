@@ -5,10 +5,14 @@ import { sites } from "./sites";
 import { users } from "./users";
 
 /**
- * A sale of site material (surplus, scrap, waste, etc.) — see the Selling module.
- * Site-scoped. Workflow: `draft` → `confirmed` | `cancelled`. Payment tracked via
- * `paymentStatus` (`unpaid` → `partial` → `paid`) and `amountReceived`. Optional
- * link to an inventory material via `materialId`. Soft-deleted.
+ * A sale of an inventory material from a site — see the Selling module. Every sale
+ * is tied to a live `materials` row (`materialId` is required): you can only sell
+ * what is actually in stock. Confirming a sale decrements `materials.currentStock`
+ * via an `outward` stock movement, and cancelling/deleting it restores the stock —
+ * all in one transaction (see selling.routes.ts). Site-scoped. Workflow:
+ * `draft` → `confirmed` | `cancelled`. Payment tracked via `paymentStatus`
+ * (`unpaid` → `partial` → `paid`) and `amountReceived`. `itemDescription`/`unit` are
+ * snapshots of the material's name/unit at sale time. Soft-deleted.
  */
 export const siteSales = pgTable(
   "site_sales",
@@ -18,9 +22,11 @@ export const siteSales = pgTable(
       .notNull()
       .references(() => sites.id, { onDelete: "cascade" }),
     saleDate: date("sale_date").notNull(),
+    // Snapshot of the material's name at sale time (set by the server, not the client).
     itemDescription: varchar("item_description", { length: 200 }).notNull(),
-    materialId: uuid("material_id").references(() => materials.id),
-    category: varchar("category", { length: 80 }).notNull(),
+    materialId: uuid("material_id")
+      .notNull()
+      .references(() => materials.id),
     quantity: numeric("quantity", { precision: 12, scale: 3 }).notNull(),
     unit: varchar("unit", { length: 40 }).notNull(),
     ratePerUnit: numeric("rate_per_unit", { precision: 14, scale: 2 }).notNull(),
@@ -43,6 +49,7 @@ export const siteSales = pgTable(
   (table) => [
     index("site_sales_site_idx").on(table.siteId),
     index("site_sales_site_date_idx").on(table.siteId, table.saleDate),
+    index("site_sales_material_idx").on(table.materialId),
     index("site_sales_status_idx").on(table.status),
     index("site_sales_payment_status_idx").on(table.paymentStatus),
   ],

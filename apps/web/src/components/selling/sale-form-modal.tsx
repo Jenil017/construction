@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Field, FormRow } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
@@ -10,11 +11,12 @@ import {
   type CreateSaleInput,
   type SiteSale,
   type UpdateSaleInput,
+  useAvailableMaterials,
   useCreateSale,
   useUpdateSale,
 } from "@/lib/hooks/use-selling";
 import { ShoppingBag } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 interface SaleFormModalProps {
   open: boolean;
@@ -23,21 +25,13 @@ interface SaleFormModalProps {
 }
 
 const PAYMENT_MODES = ["Cash", "UPI", "Bank transfer", "Cheque"];
-const CATEGORIES = [
-  "Scrap Metal",
-  "Surplus Material",
-  "Sand / Aggregate",
-  "Timber / Wood",
-  "Bricks / Blocks",
-  "Cement Bags",
-  "Equipment",
-  "Debris",
-  "Other",
-];
-const UNITS = ["kg", "ton", "piece", "bag", "truck load", "bundle", "sq ft", "cu ft", "litre"];
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+function fmtQty(n: number): string {
+  return n.toLocaleString("en-IN", { maximumFractionDigits: 3 });
 }
 
 export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
@@ -45,11 +39,12 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
   const createSale = useCreateSale();
   const updateSale = useUpdateSale();
 
+  // Only the create flow needs the in-stock item list (item is locked on edit).
+  const { data: materials, isLoading: materialsLoading } = useAvailableMaterials(open && !isEdit);
+
   const [saleDate, setSaleDate] = useState(today());
-  const [itemDescription, setItemDescription] = useState("");
-  const [category, setCategory] = useState("");
+  const [materialId, setMaterialId] = useState("");
   const [quantity, setQuantity] = useState("");
-  const [unit, setUnit] = useState("kg");
   const [ratePerUnit, setRatePerUnit] = useState("");
   const [amountReceived, setAmountReceived] = useState("");
   const [buyerName, setBuyerName] = useState("");
@@ -58,19 +53,37 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const selectedMaterial = useMemo(
+    () => materials?.find((m) => m.id === materialId) ?? null,
+    [materials, materialId],
+  );
+
+  // Unit + available stock come from the chosen material (or the sale on edit).
+  const unit = isEdit ? sale?.unit : selectedMaterial?.unit;
+  const available = selectedMaterial?.currentStock ?? null;
+
+  const options: ComboboxOption[] = useMemo(
+    () =>
+      (materials ?? []).map((m) => ({
+        value: m.id,
+        label: m.sku ? `${m.name} · ${m.sku}` : m.name,
+        hint: `${fmtQty(m.currentStock)} ${m.unit}`,
+      })),
+    [materials],
+  );
+
+  const qtyNum = Number(quantity);
+  const overStock = !isEdit && available != null && qtyNum > available;
+
   const computedTotal =
-    Number(quantity) > 0 && Number(ratePerUnit) >= 0
-      ? (Number(quantity) * Number(ratePerUnit)).toFixed(2)
-      : null;
+    qtyNum > 0 && Number(ratePerUnit) >= 0 ? (qtyNum * Number(ratePerUnit)).toFixed(2) : null;
 
   useEffect(() => {
     if (!open) return;
     setError(null);
     setSaleDate(sale?.saleDate ?? today());
-    setItemDescription(sale?.itemDescription ?? "");
-    setCategory(sale?.category ?? "");
+    setMaterialId(sale?.materialId ?? "");
     setQuantity(sale?.quantity != null ? String(sale.quantity) : "");
-    setUnit(sale?.unit ?? "kg");
     setRatePerUnit(sale?.ratePerUnit != null ? String(sale.ratePerUnit) : "");
     setAmountReceived("");
     setBuyerName(sale?.buyerName ?? "");
@@ -81,42 +94,54 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
 
   const submit = async () => {
     setError(null);
-    if (!itemDescription.trim()) {
-      setError("Item description is required.");
-      return;
+
+    if (!isEdit) {
+      if (!materialId) {
+        setError("Select an item to sell.");
+        return;
+      }
+      if (!quantity || Number.isNaN(qtyNum) || qtyNum <= 0) {
+        setError("Enter a quantity greater than zero.");
+        return;
+      }
+      if (available != null && qtyNum > available) {
+        setError(`Only ${fmtQty(available)} ${unit ?? ""} in stock.`);
+        return;
+      }
     }
-    if (!category.trim()) {
-      setError("Category is required.");
-      return;
-    }
-    const qty = Number(quantity);
-    if (!quantity || Number.isNaN(qty) || qty <= 0) {
-      setError("Enter a quantity greater than zero.");
-      return;
-    }
+
     const rate = Number(ratePerUnit);
     if (ratePerUnit === "" || Number.isNaN(rate) || rate < 0) {
       setError("Enter a valid rate per unit (can be 0 for donated/disposed items).");
       return;
     }
-    const received = Number(amountReceived) || 0;
-    const body: CreateSaleInput & UpdateSaleInput = {
-      saleDate,
-      itemDescription: itemDescription.trim(),
-      category: category.trim(),
-      quantity: qty,
-      unit,
-      ratePerUnit: rate,
-      buyerName: buyerName.trim() || null,
-      buyerContact: buyerContact.trim() || null,
-      paymentMode,
-      ...(!isEdit && received > 0 ? { amountReceived: received } : {}),
-      notes: notes.trim() || null,
-    };
 
     try {
-      if (isEdit && sale) await updateSale.mutateAsync({ id: sale.id, body });
-      else await createSale.mutateAsync(body);
+      if (isEdit && sale) {
+        const body: UpdateSaleInput = {
+          saleDate,
+          ratePerUnit: rate,
+          buyerName: buyerName.trim() || null,
+          buyerContact: buyerContact.trim() || null,
+          paymentMode,
+          notes: notes.trim() || null,
+        };
+        await updateSale.mutateAsync({ id: sale.id, body });
+      } else {
+        const received = Number(amountReceived) || 0;
+        const body: CreateSaleInput = {
+          saleDate,
+          materialId,
+          quantity: qtyNum,
+          ratePerUnit: rate,
+          buyerName: buyerName.trim() || null,
+          buyerContact: buyerContact.trim() || null,
+          paymentMode,
+          ...(received > 0 ? { amountReceived: received } : {}),
+          notes: notes.trim() || null,
+        };
+        await createSale.mutateAsync(body);
+      }
       onClose();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not save the sale record.");
@@ -131,13 +156,17 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
       onClose={onClose}
       icon={ShoppingBag}
       title={isEdit ? "Edit sale record" : "New sale record"}
-      description={isEdit ? "Update sale details." : "Record a material sold from the site."}
+      description={
+        isEdit
+          ? "Update sale details. The item and quantity are fixed."
+          : "Sell an item from your inventory — stock is deducted automatically."
+      }
       footer={
         <>
           <Button variant="outline" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={busy}>
+          <Button onClick={submit} disabled={busy || overStock}>
             {busy ? "Saving…" : "Save"}
           </Button>
         </>
@@ -154,30 +183,34 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
               onChange={(e) => setSaleDate(e.target.value)}
             />
           </Field>
-          <Field label="Category" htmlFor="sale-category" required>
-            <Input
-              id="sale-category"
-              list="sale-categories"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              placeholder="Scrap Metal, Surplus…"
-            />
-            <datalist id="sale-categories">
-              {CATEGORIES.map((cat) => (
-                <option key={cat} value={cat} />
-              ))}
-            </datalist>
+          <Field label="Item" htmlFor="sale-item" required>
+            {isEdit ? (
+              <Input id="sale-item" value={sale?.itemDescription ?? ""} disabled />
+            ) : (
+              <Combobox
+                id="sale-item"
+                options={options}
+                value={materialId}
+                onChange={setMaterialId}
+                disabled={materialsLoading}
+                placeholder={materialsLoading ? "Loading items…" : "Select an item…"}
+                searchPlaceholder="Type to search inventory…"
+                emptyText={
+                  materialsLoading ? "Loading…" : "No items in stock. Add stock in Inventory first."
+                }
+              />
+            )}
           </Field>
         </FormRow>
 
-        <Field label="Item description" htmlFor="sale-item" required>
-          <Input
-            id="sale-item"
-            value={itemDescription}
-            onChange={(e) => setItemDescription(e.target.value)}
-            placeholder="e.g. MS scrap bars, surplus cement bags, old formwork timber…"
-          />
-        </Field>
+        {!isEdit && available != null ? (
+          <p className="-mt-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {fmtQty(available)} {unit}
+            </span>{" "}
+            available in stock.
+          </p>
+        ) : null}
 
         <FormRow columns={3}>
           <Field label="Quantity" htmlFor="sale-qty" required>
@@ -185,25 +218,22 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
               id="sale-qty"
               type="number"
               min="0"
+              max={!isEdit && available != null ? available : undefined}
               step="any"
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
+              disabled={isEdit}
               placeholder="e.g. 50"
+              aria-invalid={overStock}
             />
           </Field>
-          <Field label="Unit" htmlFor="sale-unit" required>
+          <Field label="Unit" htmlFor="sale-unit">
             <Input
               id="sale-unit"
-              list="sale-units"
-              value={unit}
-              onChange={(e) => setUnit(e.target.value)}
-              placeholder="kg, ton, piece…"
+              value={unit ?? ""}
+              disabled
+              placeholder={isEdit ? "" : "Pick an item"}
             />
-            <datalist id="sale-units">
-              {UNITS.map((u) => (
-                <option key={u} value={u} />
-              ))}
-            </datalist>
           </Field>
           <Field label="Rate / unit (₹)" htmlFor="sale-rate" required>
             <Input
@@ -215,8 +245,19 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
               onChange={(e) => setRatePerUnit(e.target.value)}
               placeholder="e.g. 35"
             />
+            {!isEdit && selectedMaterial?.unitCost != null ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Last cost ₹{selectedMaterial.unitCost}/{selectedMaterial.unit}
+              </p>
+            ) : null}
           </Field>
         </FormRow>
+
+        {overStock ? (
+          <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+            Quantity exceeds available stock ({fmtQty(available ?? 0)} {unit}).
+          </div>
+        ) : null}
 
         {computedTotal !== null ? (
           <div className="rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-sm">

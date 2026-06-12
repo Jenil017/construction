@@ -207,7 +207,7 @@ export default function ReportsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Report</TableHead>
+                  <TableHead className="w-full">Report</TableHead>
                   <TableHead>Format</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Rows</TableHead>

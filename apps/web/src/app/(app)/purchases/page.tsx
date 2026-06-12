@@ -15,10 +15,7 @@ import {
 } from "@/components/ui/table";
 import { useAuth } from "@/lib/auth/auth-context";
 import { useOpenOnParam } from "@/lib/hooks/use-open-on-param";
-import {
-  type PurchasePaymentStatus,
-  usePurchases,
-} from "@/lib/hooks/use-purchases";
+import { type PurchasePaymentStatus, usePurchases } from "@/lib/hooks/use-purchases";
 import { ChevronRight, Loader2, Plus } from "lucide-react";
 import { useState } from "react";
 
@@ -128,7 +125,7 @@ export default function PurchasesPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Seller</TableHead>
+                    <TableHead className="w-full">Seller</TableHead>
                     <TableHead>Ref. / Bill</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Payment</TableHead>

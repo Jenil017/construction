@@ -93,7 +93,7 @@ export default function SuppliersPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Supplier</TableHead>
+                <TableHead className="w-full">Supplier</TableHead>
                 <TableHead>Contact</TableHead>
                 <TableHead>Phone</TableHead>
                 <TableHead>GSTIN</TableHead>

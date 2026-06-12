@@ -128,7 +128,7 @@ function WorkersTab({ canManage }: { canManage: CanFn }) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Worker</TableHead>
+                <TableHead className="w-full">Worker</TableHead>
                 <TableHead>Trade</TableHead>
                 <TableHead className="text-right">Daily wage</TableHead>
                 <TableHead className="text-right">OT rate</TableHead>
@@ -229,7 +229,7 @@ function AdvancesTab({ canManage }: { canManage: CanFn }) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Worker</TableHead>
+                <TableHead className="w-full">Worker</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
                 <TableHead>Status</TableHead>

@@ -2,6 +2,112 @@
 
 Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 
+## Post-MVP — Record detail modals (tap-a-row) ✅ (2026-06-12)
+
+Made data-table rows **open a full record detail modal** on click — the immediate ask
+being the Selling table (a sale's full info + a **Total / Received / Outstanding**
+payment breakdown), with the same pattern applied to Expenses. Mobile-first for the
+planned PWA: a **card list on phones, a clickable table on ≥md**, both opening the same
+modal (the existing `Modal` already renders as a bottom sheet on small screens).
+
+### Decisions made
+- **Reusable detail primitives** (`components/ui/detail.tsx`): `StatTiles` (headline
+  figures, 2-up on phones / 3-up on ≥sm), `DetailRows` (a label→value definition list that
+  wraps on mobile, with `hideEmpty` to drop blank rows), and `formatINR` (Indian-format
+  rupees, e.g. ₹3,00,000). These standardise every record modal so the remaining tables are
+  quick to roll out.
+- **Mirror the existing purchases pattern** (it already had row→detail): phones get a
+  `<ul>` of tappable cards (`md:hidden`), desktop gets a `cursor-pointer` table
+  (`hidden md:block`); both call the same `setDetail(row)`. Row actions moved **into** the
+  modal (no more inline action column doing the work) but a desktop "View" affordance stays.
+- **Selling detail** shows status + payment badges, the Total/Received/Outstanding tiles
+  (Outstanding tinted red when > 0 — directly answers "₹50,000 remaining, where?"), all
+  fields, notes, and permission-gated **Record payment / Edit / Delete** (delete returns
+  stock). Driven entirely off the list row — no extra fetch.
+- **Expense detail** surfaces a prominent amount, all fields, and the **Approve / Reject**
+  workflow (the `useSetExpenseStatus` hook existed but had **no UI** before now), plus
+  Edit / Delete — permission-gated (`expenses:approve|update|delete`).
+
+### Delivered
+- **Web** (`apps/web`): `components/ui/detail.tsx`; `selling/sale-detail-modal.tsx` +
+  `expenses/expense-detail-modal.tsx`; `selling/page.tsx` and `expenses/page.tsx` rebuilt
+  with the card-list/clickable-table + detail-modal pattern.
+
+### Verification
+- `pnpm typecheck` (5 pkgs) — **pass**. `pnpm build` (`/selling`, `/expenses` compile) —
+  **pass**. Biome — the 5 changed/added files are clean.
+
+### Follow-ups
+- Detail modals already exist for purchases / salary / inventory / DPR. **Still without a
+  row→detail modal:** suppliers, workers, sites, settings→users, attendance — easy to roll
+  out next on the same `detail.tsx` primitives.
+
+## Post-MVP — Selling ↔ Inventory integration ✅ (2026-06-12)
+
+The Selling module (added post-Phase-9) was a standalone register: it recorded a sale
+as **free text** (typed item name + a free-text "category") and **never touched
+inventory** — you could "sell" stock you did not have. This change ties selling
+strictly to the inventory master so a sale can only ever be an in-stock item, and a
+confirmed sale moves stock. Migration `0010`.
+
+### Decisions made (with the product owner)
+- **Strictly inventory-only sales.** `site_sales.materialId` is now **required** (FK to
+  `materials`); the free-text item field and the whole **`category`** concept are gone.
+  You can only sell what exists in inventory with stock on hand. `itemDescription`/`unit`
+  are now **server-set snapshots** of the material's name/unit at sale time (kept for a
+  readable record if the material is later renamed/deleted).
+- **One smart searchable dropdown.** The sale form replaces the typed item + category with
+  a single portaled `Combobox` sourced from a new `GET /selling/available-materials`
+  endpoint that returns **only materials with `currentStock > 0`**. The user types a
+  partial name/SKU to filter; picking an item auto-fills the unit (read-only), shows the
+  available quantity, and surfaces the last unit cost as a **hint** next to the rate (the
+  selling rate stays manually entered — cost ≠ sale price).
+- **Stock moves with the sale, in one transaction.** Creating a sale writes an `outward`
+  `stock_movement` and decrements `materials.currentStock` together with the sale insert
+  (same pattern as purchases' goods-receipt inward), guarded by an **`Idempotency-Key`**.
+  Overselling is rejected (`Only N <unit> of <item> in stock.`) both in the form (live,
+  Save disabled) and on the server (authoritative).
+- **Cancel/delete restores stock.** Cancelling a confirmed sale (or deleting it) writes a
+  reversing `inward` movement and bumps `currentStock` back, in the same transaction.
+  Soft-delete + the status guard make double-restores impossible (a deleted/cancelled row
+  is filtered out / blocked on the second call).
+- **Item + quantity lock after creation.** They drive the stock movement, so the update
+  endpoint only edits date, rate, buyer, payment mode, and notes. To change what/how much
+  was sold, cancel (stock returns) and record a new sale.
+
+### Delivered
+- **DB** (`packages/db`): `site_sales` — `material_id` → `NOT NULL`, dropped `category`,
+  added `site_sales_material_idx`; doc comment rewritten. Migration
+  `0010_brief_robin_chapel.sql` (with a guarded `DELETE … WHERE material_id IS NULL` to
+  clear pre-feature free-text rows before the constraint is enforced).
+- **API** (`apps/api/src/modules/selling`): new `GET /selling/available-materials`
+  (`selling:create`, stock > 0, partial search); `POST /selling` now validates the
+  material + stock and decrements inventory transactionally (idempotent); `POST
+  /selling/{id}/status` and `DELETE /selling/{id}` restore stock; `PATCH` restricted to
+  the editable fields; `category` removed from schemas/serialization.
+- **Web** (`apps/web`): `useAvailableMaterials` hook; `sale-form-modal` rebuilt around the
+  `Combobox` (auto unit, stock cap, cost hint, over-stock guard); `category` removed from
+  the hooks/list page/table; create + delete invalidate the `inventory` query cache so
+  stock widgets refresh.
+
+### Verification
+- `pnpm typecheck` (5 pkgs) — **pass**. `pnpm build` (Next 15 routes incl. `/selling` +
+  API wrangler dry-run) — **pass**. Biome — the 7 changed feature files are clean
+  (`npx biome check` on them passes); note a **pre-existing** `useExhaustiveDependencies`
+  error in `purchases/purchase-detail-modal.tsx` (untouched here) still fails repo-wide
+  `pnpm check`.
+- `pnpm db:generate` → `0010`; SQL reviewed (drop column, set-not-null with the delete
+  guard, add index).
+- **Pending owner authorization** (the DB-migration gate): applying `0010` to Neon
+  (`pnpm db:migrate`) and the live `wrangler dev` smoke (create a sale → stock drops +
+  an `outward` movement appears; oversell → 409; cancel/delete → stock restored). Not run
+  without sign-off.
+
+### Follow-ups
+- Pre-existing Biome error in `purchase-detail-modal.tsx` is unrelated to this work and
+  left as-is.
+- No "selling" report type yet (Phase 8 export pipeline); a sales report can be added later.
+
 ## Phase 9 — Performance, Security & Production Readiness ✅ (2026-06-09)
 
 The hardening phase. Centerpiece is the **idempotency middleware/service** (mandated by

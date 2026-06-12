@@ -1,11 +1,12 @@
-import { siteSales, users } from "@construction-erp/db/schema";
+import { materials, siteSales, stockMovements, users } from "@construction-erp/db/schema";
 import { apiErrorSchema, apiSuccessSchema, buildPaginationMeta } from "@construction-erp/shared";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
-import { type SQL, and, asc, count, desc, eq, gte, ilike, isNull, lte, or } from "drizzle-orm";
+import { type SQL, and, asc, count, desc, eq, gte, ilike, isNull, lte, or, sql } from "drizzle-orm";
 import { writeAudit } from "../../common/audit";
 import { type DbClient, getDb } from "../../common/db";
 import { ConflictError, NotFoundError } from "../../common/errors";
 import { getRequestMeta } from "../../common/http/request-meta";
+import { idempotency } from "../../common/idempotency";
 import { requireAuth } from "../../common/middleware/require-auth";
 import { requirePermission } from "../../common/middleware/require-permission";
 import { requireSiteContext } from "../../common/middleware/require-site-context";
@@ -13,9 +14,11 @@ import type { Env } from "../../env";
 import {
   type SALE_PAYMENT_STATUSES,
   type SALE_STATUSES,
+  availableMaterialSchema,
   confirmSaleBodySchema,
   createSaleBodySchema,
   deleteSaleResultSchema,
+  listAvailableMaterialsQuerySchema,
   listSalesQuerySchema,
   recordPaymentBodySchema,
   saleIdParamSchema,
@@ -34,8 +37,7 @@ interface SaleRow {
   siteId: string;
   saleDate: string;
   itemDescription: string;
-  materialId: string | null;
-  category: string;
+  materialId: string;
   quantity: string;
   unit: string;
   ratePerUnit: string;
@@ -58,7 +60,6 @@ const saleColumns = {
   saleDate: siteSales.saleDate,
   itemDescription: siteSales.itemDescription,
   materialId: siteSales.materialId,
-  category: siteSales.category,
   quantity: siteSales.quantity,
   unit: siteSales.unit,
   ratePerUnit: siteSales.ratePerUnit,
@@ -82,7 +83,6 @@ function serializeSale(row: SaleRow) {
     saleDate: row.saleDate,
     itemDescription: row.itemDescription,
     materialId: row.materialId,
-    category: row.category,
     quantity: Number(row.quantity),
     unit: row.unit,
     ratePerUnit: Number(row.ratePerUnit),
@@ -118,11 +118,148 @@ async function loadRawSale(db: DbClient, siteId: string, id: string) {
   return row ?? null;
 }
 
+/** Load a live (non-deleted) material on this site — for stock math and snapshots. */
+async function loadMaterial(db: DbClient, siteId: string, id: string) {
+  const [row] = await db
+    .select()
+    .from(materials)
+    .where(and(eq(materials.id, id), eq(materials.siteId, siteId), isNull(materials.deletedAt)))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Apply a sale's effect on inventory inside a transaction. `outward` decrements
+ * stock (and guards against overselling); `inward` restores it when a sale is
+ * cancelled or deleted. Inserts the ledger movement and updates the material's
+ * cached `currentStock` together, returning the resulting balance.
+ */
+async function moveSaleStock(
+  tx: DbClient,
+  args: {
+    siteId: string;
+    materialId: string;
+    quantity: number;
+    direction: "outward" | "inward";
+    userId: string;
+    reference: string;
+    movementDate: string;
+  },
+) {
+  const [mat] = await tx
+    .select()
+    .from(materials)
+    .where(
+      and(
+        eq(materials.id, args.materialId),
+        eq(materials.siteId, args.siteId),
+        isNull(materials.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!mat) throw new NotFoundError("The inventory item for this sale no longer exists.");
+
+  const current = Number(mat.currentStock);
+  const qty = round3(args.quantity);
+  if (args.direction === "outward" && qty > current) {
+    throw new ConflictError(`Only ${current} ${mat.unit} of ${mat.name} in stock.`);
+  }
+  const balanceAfter = round3(args.direction === "outward" ? current - qty : current + qty);
+
+  await tx.insert(stockMovements).values({
+    siteId: args.siteId,
+    materialId: mat.id,
+    type: args.direction,
+    quantity: String(qty),
+    balanceAfter: String(balanceAfter),
+    reference: args.reference,
+    movementDate: args.movementDate,
+    createdByUserId: args.userId,
+  });
+  await tx
+    .update(materials)
+    .set({ currentStock: String(balanceAfter) })
+    .where(eq(materials.id, mat.id));
+  return balanceAfter;
+}
+
 function derivePaymentStatus(total: number, received: number): "unpaid" | "partial" | "paid" {
   if (received <= 0) return "unpaid";
   if (received >= total) return "paid";
   return "partial";
 }
+
+// ─── Available materials (dropdown source) ──────────────────────────────────────
+const availableMaterialsRoute = createRoute({
+  method: "get",
+  path: "/selling/available-materials",
+  tags: ["Selling"],
+  summary: "List in-stock materials that can be sold",
+  description:
+    "Permission: selling:create. Returns only materials on the active site with stock on hand (currentStock > 0), for the sale item dropdown. Supports partial search on name/SKU/category.",
+  middleware: [requireAuth, requireSiteContext, requirePermission("selling", "create")] as const,
+  request: { query: listAvailableMaterialsQuerySchema },
+  responses: {
+    200: {
+      description: "Sellable materials",
+      content: {
+        "application/json": { schema: apiSuccessSchema(z.array(availableMaterialSchema)) },
+      },
+    },
+    403: {
+      description: "Permission denied",
+      content: { "application/json": { schema: apiErrorSchema } },
+    },
+  },
+});
+
+sellingRoutes.openapi(availableMaterialsRoute, async (c) => {
+  const { search } = c.req.valid("query");
+  const auth = c.get("auth");
+  const db = getDb(c);
+  const siteId = auth.siteId as string;
+
+  const filters = [
+    eq(materials.siteId, siteId),
+    isNull(materials.deletedAt),
+    sql`${materials.currentStock} > 0`,
+  ];
+  if (search) {
+    const pattern = `%${search}%`;
+    const term = or(
+      ilike(materials.name, pattern),
+      ilike(materials.sku, pattern),
+      ilike(materials.category, pattern),
+    );
+    if (term) filters.push(term);
+  }
+
+  const rows = await db
+    .select({
+      id: materials.id,
+      name: materials.name,
+      sku: materials.sku,
+      category: materials.category,
+      unit: materials.unit,
+      currentStock: materials.currentStock,
+      unitCost: materials.unitCost,
+    })
+    .from(materials)
+    .where(and(...filters))
+    .orderBy(asc(materials.name))
+    .limit(500);
+
+  const data = rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    sku: r.sku,
+    category: r.category,
+    unit: r.unit,
+    currentStock: Number(r.currentStock),
+    unitCost: r.unitCost != null ? Number(r.unitCost) : null,
+  }));
+  return c.json({ success: true as const, data }, 200);
+});
 
 // ─── List ─────────────────────────────────────────────────────────────────────
 const listRoute = createRoute({
@@ -130,8 +267,7 @@ const listRoute = createRoute({
   path: "/selling",
   tags: ["Selling"],
   summary: "List site sales",
-  description:
-    "Permission: selling:view. Filter by search, category, status, payment status, dates.",
+  description: "Permission: selling:view. Filter by search, status, payment status, dates.",
   middleware: [requireAuth, requireSiteContext, requirePermission("selling", "view")] as const,
   request: { query: listSalesQuerySchema },
   responses: {
@@ -147,25 +283,20 @@ const listRoute = createRoute({
 });
 
 sellingRoutes.openapi(listRoute, async (c) => {
-  const { page, pageSize, sortOrder, search, category, status, paymentStatus, dateFrom, dateTo } =
+  const { page, pageSize, sortOrder, search, status, paymentStatus, dateFrom, dateTo } =
     c.req.valid("query");
   const auth = c.get("auth");
   const db = getDb(c);
   const siteId = auth.siteId as string;
 
   const filters = [eq(siteSales.siteId, siteId), isNull(siteSales.deletedAt)];
-  if (category) filters.push(eq(siteSales.category, category));
   if (status) filters.push(eq(siteSales.status, status));
   if (paymentStatus) filters.push(eq(siteSales.paymentStatus, paymentStatus));
   if (dateFrom) filters.push(gte(siteSales.saleDate, dateFrom));
   if (dateTo) filters.push(lte(siteSales.saleDate, dateTo));
   if (search) {
     const pattern = `%${search}%`;
-    const term = or(
-      ilike(siteSales.itemDescription, pattern),
-      ilike(siteSales.buyerName, pattern),
-      ilike(siteSales.category, pattern),
-    );
+    const term = or(ilike(siteSales.itemDescription, pattern), ilike(siteSales.buyerName, pattern));
     if (term) filters.push(term);
   }
   const whereClause = and(...filters);
@@ -190,14 +321,20 @@ sellingRoutes.openapi(listRoute, async (c) => {
   );
 });
 
-// ─── Create ───────────────────────────────────────────────────────────────────
+// ─── Create (decrements inventory) ──────────────────────────────────────────────
 const createRouteDef = createRoute({
   method: "post",
   path: "/selling",
   tags: ["Selling"],
   summary: "Record a site sale",
-  description: "Permission: selling:create. Starts as 'draft' unless status='confirmed'.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("selling", "create")] as const,
+  description:
+    "Permission: selling:create. The sold item must be an in-stock inventory material; the sale is confirmed and the quantity is deducted from inventory in one transaction (an `outward` stock movement). Accepts an Idempotency-Key header for safe retries.",
+  middleware: [
+    requireAuth,
+    requireSiteContext,
+    requirePermission("selling", "create"),
+    idempotency(),
+  ] as const,
   request: {
     body: { content: { "application/json": { schema: createSaleBodySchema } }, required: true },
   },
@@ -210,6 +347,14 @@ const createRouteDef = createRoute({
       description: "Permission denied",
       content: { "application/json": { schema: apiErrorSchema } },
     },
+    404: {
+      description: "Material not found",
+      content: { "application/json": { schema: apiErrorSchema } },
+    },
+    409: {
+      description: "Insufficient stock",
+      content: { "application/json": { schema: apiErrorSchema } },
+    },
   },
 });
 
@@ -220,26 +365,35 @@ sellingRoutes.openapi(createRouteDef, async (c) => {
   const meta = getRequestMeta(c);
   const siteId = auth.siteId as string;
 
+  const material = await loadMaterial(db, siteId, body.materialId);
+  if (!material) throw new NotFoundError("That inventory item was not found on this site.");
+
   const qty = round3(body.quantity);
+  const available = Number(material.currentStock);
+  if (qty > available) {
+    throw new ConflictError(`Only ${available} ${material.unit} of ${material.name} in stock.`);
+  }
+
   const rate = round2(body.ratePerUnit);
   const total = round2(qty * rate);
   const amtReceived = round2(body.amountReceived ?? 0);
   const paymentStatus = derivePaymentStatus(total, amtReceived);
+  const saleDate = body.saleDate ?? today();
+  const buyerName = body.buyerName?.trim() || null;
 
   const created = await db.transaction(async (tx) => {
     const [row] = await tx
       .insert(siteSales)
       .values({
         siteId,
-        saleDate: body.saleDate ?? today(),
-        itemDescription: body.itemDescription,
-        materialId: body.materialId ?? null,
-        category: body.category,
+        saleDate,
+        itemDescription: material.name,
+        materialId: material.id,
         quantity: String(qty),
-        unit: body.unit,
+        unit: material.unit,
         ratePerUnit: String(rate),
         totalAmount: String(total),
-        buyerName: body.buyerName ?? null,
+        buyerName,
         buyerContact: body.buyerContact ?? null,
         paymentMode: body.paymentMode ?? null,
         amountReceived: String(amtReceived),
@@ -250,6 +404,17 @@ sellingRoutes.openapi(createRouteDef, async (c) => {
       })
       .returning();
     if (!row) throw new ConflictError("Could not record the sale. Please try again.");
+
+    await moveSaleStock(tx, {
+      siteId,
+      materialId: material.id,
+      quantity: qty,
+      direction: "outward",
+      userId: auth.userId,
+      reference: buyerName ? `Sale to ${buyerName}` : "Sale",
+      movementDate: saleDate,
+    });
+
     await writeAudit(tx, {
       siteId,
       actorUserId: auth.userId,
@@ -257,7 +422,7 @@ sellingRoutes.openapi(createRouteDef, async (c) => {
       action: "create",
       entityType: "site_sale",
       entityId: row.id,
-      after: { itemDescription: row.itemDescription, category: row.category, status: row.status },
+      after: { item: material.name, quantity: qty, status: row.status },
       ip: meta.ip,
       userAgent: meta.userAgent,
       requestId: meta.requestId,
@@ -306,13 +471,14 @@ sellingRoutes.openapi(getRouteDef, async (c) => {
   return c.json({ success: true as const, data }, 200);
 });
 
-// ─── Update (draft only) ──────────────────────────────────────────────────────
+// ─── Update (item + quantity locked) ────────────────────────────────────────────
 const updateRouteDef = createRoute({
   method: "patch",
   path: "/selling/{id}",
   tags: ["Selling"],
-  summary: "Update a draft sale",
-  description: "Permission: selling:update. Confirmed/cancelled sales are locked.",
+  summary: "Update a sale's details",
+  description:
+    "Permission: selling:update. The sold item and quantity are locked (they drive the stock movement); only date, rate, buyer, payment mode, and notes can be edited. To change what or how much was sold, cancel the sale (stock is returned) and record a new one.",
   middleware: [requireAuth, requireSiteContext, requirePermission("selling", "update")] as const,
   request: {
     params: saleIdParamSchema,
@@ -342,25 +508,20 @@ sellingRoutes.openapi(updateRouteDef, async (c) => {
 
   const existing = await loadRawSale(db, siteId, id);
   if (!existing) throw new NotFoundError("Sale not found.");
+  if (existing.status === "cancelled") {
+    throw new ConflictError("A cancelled sale can no longer be edited.");
+  }
 
   const updates: Record<string, unknown> = {};
   if (body.saleDate !== undefined) updates.saleDate = body.saleDate;
-  if (body.itemDescription !== undefined) updates.itemDescription = body.itemDescription;
-  if (body.materialId !== undefined) updates.materialId = body.materialId;
-  if (body.category !== undefined) updates.category = body.category;
-  if (body.unit !== undefined) updates.unit = body.unit;
   if (body.buyerName !== undefined) updates.buyerName = body.buyerName;
   if (body.buyerContact !== undefined) updates.buyerContact = body.buyerContact;
   if (body.paymentMode !== undefined) updates.paymentMode = body.paymentMode;
   if (body.notes !== undefined) updates.notes = body.notes;
-
-  const newQty = body.quantity !== undefined ? round3(body.quantity) : Number(existing.quantity);
-  const newRate =
-    body.ratePerUnit !== undefined ? round2(body.ratePerUnit) : Number(existing.ratePerUnit);
-  if (body.quantity !== undefined) updates.quantity = String(newQty);
-  if (body.ratePerUnit !== undefined) updates.ratePerUnit = String(newRate);
-  if (body.quantity !== undefined || body.ratePerUnit !== undefined) {
-    const newTotal = round2(newQty * newRate);
+  if (body.ratePerUnit !== undefined) {
+    const newRate = round2(body.ratePerUnit);
+    const newTotal = round2(Number(existing.quantity) * newRate);
+    updates.ratePerUnit = String(newRate);
     updates.totalAmount = String(newTotal);
     updates.paymentStatus = derivePaymentStatus(newTotal, Number(existing.amountReceived));
   }
@@ -376,7 +537,7 @@ sellingRoutes.openapi(updateRouteDef, async (c) => {
       action: "update",
       entityType: "site_sale",
       entityId: id,
-      after: { itemDescription: body.itemDescription ?? existing.itemDescription },
+      after: { item: existing.itemDescription },
       ip: meta.ip,
       userAgent: meta.userAgent,
       requestId: meta.requestId,
@@ -388,14 +549,20 @@ sellingRoutes.openapi(updateRouteDef, async (c) => {
   return c.json({ success: true as const, data }, 200);
 });
 
-// ─── Confirm / cancel ─────────────────────────────────────────────────────────
+// ─── Confirm / cancel (moves stock) ─────────────────────────────────────────────
 const confirmRouteDef = createRoute({
   method: "post",
   path: "/selling/{id}/status",
   tags: ["Selling"],
   summary: "Confirm or cancel a sale",
-  description: "Permission: selling:approve. Moves a draft to confirmed or cancelled.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("selling", "approve")] as const,
+  description:
+    "Permission: selling:approve. Confirming a draft deducts the quantity from inventory; cancelling a confirmed sale returns it. Accepts an Idempotency-Key header for safe retries.",
+  middleware: [
+    requireAuth,
+    requireSiteContext,
+    requirePermission("selling", "approve"),
+    idempotency(),
+  ] as const,
   request: {
     params: saleIdParamSchema,
     body: { content: { "application/json": { schema: confirmSaleBodySchema } }, required: true },
@@ -411,7 +578,7 @@ const confirmRouteDef = createRoute({
     },
     404: { description: "Not found", content: { "application/json": { schema: apiErrorSchema } } },
     409: {
-      description: "Already confirmed/cancelled",
+      description: "Invalid status transition or insufficient stock",
       content: { "application/json": { schema: apiErrorSchema } },
     },
   },
@@ -427,11 +594,36 @@ sellingRoutes.openapi(confirmRouteDef, async (c) => {
 
   const existing = await loadRawSale(db, siteId, id);
   if (!existing) throw new NotFoundError("Sale not found.");
-  if (existing.status !== "draft") {
-    throw new ConflictError("Only draft sales can be confirmed or cancelled.");
+  if (existing.status === status) throw new ConflictError(`This sale is already ${status}.`);
+  if (existing.status === "cancelled") {
+    throw new ConflictError("A cancelled sale cannot change status.");
   }
 
   await db.transaction(async (tx) => {
+    if (status === "cancelled" && existing.status === "confirmed") {
+      // Return the sold stock to inventory.
+      await moveSaleStock(tx, {
+        siteId,
+        materialId: existing.materialId,
+        quantity: Number(existing.quantity),
+        direction: "inward",
+        userId: auth.userId,
+        reference: "Sale cancelled",
+        movementDate: today(),
+      });
+    } else if (status === "confirmed" && existing.status === "draft") {
+      // Draft → confirmed: take the stock now.
+      await moveSaleStock(tx, {
+        siteId,
+        materialId: existing.materialId,
+        quantity: Number(existing.quantity),
+        direction: "outward",
+        userId: auth.userId,
+        reference: existing.buyerName ? `Sale to ${existing.buyerName}` : "Sale",
+        movementDate: existing.saleDate,
+      });
+    }
+
     await tx.update(siteSales).set({ status }).where(eq(siteSales.id, id));
     await writeAudit(tx, {
       siteId,
@@ -521,13 +713,14 @@ sellingRoutes.openapi(paymentRouteDef, async (c) => {
   return c.json({ success: true as const, data }, 200);
 });
 
-// ─── Delete ───────────────────────────────────────────────────────────────────
+// ─── Delete (restores stock) ────────────────────────────────────────────────────
 const deleteRouteDef = createRoute({
   method: "delete",
   path: "/selling/{id}",
   tags: ["Selling"],
   summary: "Soft-delete a sale",
-  description: "Permission: selling:delete.",
+  description:
+    "Permission: selling:delete. If the sale was confirmed, the sold quantity is returned to inventory in the same transaction.",
   middleware: [requireAuth, requireSiteContext, requirePermission("selling", "delete")] as const,
   request: { params: saleIdParamSchema },
   responses: {
@@ -554,6 +747,18 @@ sellingRoutes.openapi(deleteRouteDef, async (c) => {
   if (!existing) throw new NotFoundError("Sale not found.");
 
   await db.transaction(async (tx) => {
+    // Only a confirmed sale has taken stock; a cancelled one already returned it.
+    if (existing.status === "confirmed") {
+      await moveSaleStock(tx, {
+        siteId,
+        materialId: existing.materialId,
+        quantity: Number(existing.quantity),
+        direction: "inward",
+        userId: auth.userId,
+        reference: "Sale deleted",
+        movementDate: today(),
+      });
+    }
     await tx.update(siteSales).set({ deletedAt: new Date() }).where(eq(siteSales.id, id));
     await writeAudit(tx, {
       siteId,
@@ -562,7 +767,7 @@ sellingRoutes.openapi(deleteRouteDef, async (c) => {
       action: "delete",
       entityType: "site_sale",
       entityId: id,
-      before: { itemDescription: existing.itemDescription, status: existing.status },
+      before: { item: existing.itemDescription, status: existing.status },
       ip: meta.ip,
       userAgent: meta.userAgent,
       requestId: meta.requestId,

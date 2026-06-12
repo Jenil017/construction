@@ -121,7 +121,7 @@ export default function UsersPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead>Email</TableHead>
+                <TableHead className="w-full">Email</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Access</TableHead>
                 {canUpdate || canDelete ? (

@@ -87,7 +87,7 @@ export default function SalaryPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Period</TableHead>
+                    <TableHead className="w-full">Period</TableHead>
                     <TableHead className="text-right">Workers</TableHead>
                     <TableHead className="text-right">Gross</TableHead>
                     <TableHead className="text-right">Advances</TableHead>

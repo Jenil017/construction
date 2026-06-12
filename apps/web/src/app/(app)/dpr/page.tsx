@@ -185,7 +185,7 @@ export default function DprPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
-                    <TableHead>Category</TableHead>
+                    <TableHead className="w-full">Category</TableHead>
                     <TableHead>Location</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Photos</TableHead>

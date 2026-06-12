@@ -1,9 +1,11 @@
 "use client";
 
+import { SaleDetailModal } from "@/components/selling/sale-detail-modal";
 import { SaleFormModal } from "@/components/selling/sale-form-modal";
 import { SalePaymentModal } from "@/components/selling/sale-payment-modal";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatINR } from "@/components/ui/detail";
 import { FilterDrawer, type FilterValues } from "@/components/ui/filter-drawer";
 import { Input } from "@/components/ui/input";
 import {
@@ -14,16 +16,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ApiError } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth/auth-context";
 import { useOpenOnParam } from "@/lib/hooks/use-open-on-param";
-import {
-  type SalePaymentStatus,
-  type SiteSale,
-  useDeleteSale,
-  useSales,
-} from "@/lib/hooks/use-selling";
-import { Loader2, Plus, Search, Trash2 } from "lucide-react";
+import { type SalePaymentStatus, type SiteSale, useSales } from "@/lib/hooks/use-selling";
+import { ChevronRight, Loader2, Plus, Search } from "lucide-react";
 import { useState } from "react";
 
 const PAYMENT_VARIANT: Record<SalePaymentStatus, BadgeProps["variant"]> = {
@@ -31,10 +27,6 @@ const PAYMENT_VARIANT: Record<SalePaymentStatus, BadgeProps["variant"]> = {
   partial: "warning",
   paid: "success",
 };
-
-function fmt(n: number) {
-  return `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-}
 
 export default function SellingPage() {
   const { can } = useAuth();
@@ -53,15 +45,12 @@ export default function SellingPage() {
     dateTo: filters.dateTo || undefined,
   });
 
-  const deleteSale = useDeleteSale();
-
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<SiteSale | null>(null);
   const [paymentSale, setPaymentSale] = useState<SiteSale | null>(null);
+  const [detailSale, setDetailSale] = useState<SiteSale | null>(null);
 
   const canCreate = can("selling", "create");
-  const canUpdate = can("selling", "update");
-  const canDelete = can("selling", "delete");
 
   const openCreate = () => {
     setEditing(null);
@@ -69,13 +58,14 @@ export default function SellingPage() {
   };
   useOpenOnParam("new", canCreate, openCreate);
 
-  const onDelete = async (s: SiteSale) => {
-    if (!window.confirm("Delete this sale record?")) return;
-    try {
-      await deleteSale.mutateAsync(s.id);
-    } catch (err) {
-      window.alert(err instanceof ApiError ? err.message : "Could not delete the sale record.");
-    }
+  const openEdit = (sale: SiteSale) => {
+    setDetailSale(null);
+    setEditing(sale);
+    setFormOpen(true);
+  };
+  const openPayment = (sale: SiteSale) => {
+    setDetailSale(null);
+    setPaymentSale(sale);
   };
 
   return (
@@ -84,7 +74,7 @@ export default function SellingPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Selling</h1>
           <p className="text-sm text-muted-foreground">
-            Record materials sold from the site — scrap, surplus, or unwanted items.
+            Sell items from your inventory — stock updates automatically.
           </p>
         </div>
         {canCreate ? (
@@ -101,7 +91,7 @@ export default function SellingPage() {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search item, buyer, or category"
+            placeholder="Search item or buyer"
             className="pl-8"
           />
         </div>
@@ -142,75 +132,108 @@ export default function SellingPage() {
             No sale records found.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Item</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead className="text-right">Qty</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead>Buyer</TableHead>
-                  <TableHead>Payment</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sales.map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell className="text-muted-foreground">{s.saleDate}</TableCell>
-                    <TableCell className="max-w-[160px] truncate font-medium">
-                      {s.itemDescription}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{s.category}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {s.quantity} {s.unit}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(s.totalAmount)}</TableCell>
-                    <TableCell className="max-w-[120px] truncate">{s.buyerName}</TableCell>
-                    <TableCell>
-                      <Badge variant={PAYMENT_VARIANT[s.paymentStatus]}>{s.paymentStatus}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        {canUpdate && s.paymentStatus !== "paid" ? (
-                          <Button variant="ghost" size="sm" onClick={() => setPaymentSale(s)}>
-                            Payment
-                          </Button>
-                        ) : null}
-                        {canUpdate ? (
+          <>
+            {/* Mobile cards — tap to open the full record. */}
+            <ul className="divide-y md:hidden">
+              {sales.map((s) => (
+                <li key={s.id}>
+                  <button
+                    type="button"
+                    onClick={() => setDetailSale(s)}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors active:bg-accent"
+                  >
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate font-medium">{s.itemDescription}</span>
+                        <Badge variant={PAYMENT_VARIANT[s.paymentStatus]}>{s.paymentStatus}</Badge>
+                      </div>
+                      <p className="truncate text-sm text-muted-foreground">
+                        {s.quantity} {s.unit} · {formatINR(s.totalAmount)} · {s.saleDate}
+                      </p>
+                      {s.paymentStatus !== "paid" ? (
+                        <p className="truncate text-xs text-muted-foreground">
+                          {formatINR(s.amountReceived)} received
+                        </p>
+                      ) : null}
+                    </div>
+                    <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+
+            {/* Desktop table — click a row to open the full record. */}
+            <div className="hidden md:block">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="whitespace-nowrap">Date</TableHead>
+                      <TableHead className="w-full">Item</TableHead>
+                      <TableHead className="text-right">Qty</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-right">Received</TableHead>
+                      <TableHead>Buyer</TableHead>
+                      <TableHead>Payment</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sales.map((s) => (
+                      <TableRow
+                        key={s.id}
+                        className="cursor-pointer"
+                        onClick={() => setDetailSale(s)}
+                      >
+                        <TableCell className="whitespace-nowrap text-muted-foreground">
+                          {s.saleDate}
+                        </TableCell>
+                        <TableCell className="max-w-[360px] truncate font-medium">
+                          {s.itemDescription}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">
+                          {s.quantity} {s.unit}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatINR(s.totalAmount)}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">
+                          {formatINR(s.amountReceived)}
+                        </TableCell>
+                        <TableCell className="max-w-[120px] truncate">{s.buyerName}</TableCell>
+                        <TableCell>
+                          <Badge variant={PAYMENT_VARIANT[s.paymentStatus]}>
+                            {s.paymentStatus}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => {
-                              setEditing(s);
-                              setFormOpen(true);
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDetailSale(s);
                             }}
                           >
-                            Edit
+                            View
                           </Button>
-                        ) : null}
-                        {canDelete ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-danger hover:text-danger"
-                            onClick={() => onDelete(s)}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
-                        ) : null}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </>
         )}
       </div>
 
+      <SaleDetailModal
+        sale={detailSale}
+        onClose={() => setDetailSale(null)}
+        onEdit={openEdit}
+        onRecordPayment={openPayment}
+      />
       <SaleFormModal open={formOpen} onClose={() => setFormOpen(false)} sale={editing} />
       <SalePaymentModal
         open={!!paymentSale}

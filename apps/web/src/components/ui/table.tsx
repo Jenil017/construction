@@ -31,11 +31,14 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
   );
 }
 
+// Consistent gutters everywhere: 16px between columns, a slightly wider 20px/24px
+// inset on the first/last cell so content never hugs the card edge. Headers and
+// body cells share the exact same horizontal padding so columns stay aligned.
 function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   return (
     <th
       className={cn(
-        "h-10 whitespace-nowrap px-3 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground",
+        "h-11 whitespace-nowrap px-4 text-left align-middle text-xs font-semibold uppercase tracking-wider text-muted-foreground first:pl-5 last:pr-5 sm:first:pl-6 sm:last:pr-6",
         className,
       )}
       {...props}
@@ -44,7 +47,15 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
 }
 
 function TableCell({ className, ...props }: React.ComponentProps<"td">) {
-  return <td className={cn("px-3 py-3 align-middle", className)} {...props} />;
+  return (
+    <td
+      className={cn(
+        "px-4 py-3.5 align-middle first:pl-5 last:pr-5 sm:first:pl-6 sm:last:pr-6",
+        className,
+      )}
+      {...props}
+    />
+  );
 }
 
 export { Table, TableHeader, TableBody, TableRow, TableHead, TableCell };
