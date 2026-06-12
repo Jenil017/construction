@@ -48,10 +48,16 @@ workers get a **per-site category dropdown** (replacing free-text "trade"). Migr
   → open Salary for the month → give an advance and a payment → balances update).
 
 ### Follow-ups
-- The Reports "salary" export still reads the old `salary_runs` tables, so it will be empty
-  going forward — point it at the new monthly model in a later pass.
+- ✅ **Resolved (2026-06-13):** the Reports **Salary register** was repointed to the new
+  model (computes per-worker days/gross/advances/net/paid/balance from `attendance` +
+  `worker_advances` + `salary_payments` over the date range), the **Attendance register**
+  now shows `category` instead of the legacy `trade`, and a new **Sales register**
+  (`sales_register`, from `site_sales`) was added — previously sales had no report at all.
+  `salary_runs`/`salary_run_items` are now referenced by **no** code (kept as empty tables).
 - `worker_advances.settled_in_run_id` is now unused (advances deduct by date); harmless,
   left in place.
+- The `/reports/types` list is edge-cached for 1h, so a newly added report type can take up
+  to an hour to appear on a deployed worker (immediate locally).
 
 ## Post-MVP — Record detail modals (tap-a-row) ✅ (2026-06-12)
 

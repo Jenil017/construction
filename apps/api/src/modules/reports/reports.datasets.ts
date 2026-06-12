@@ -4,11 +4,13 @@ import {
   expenses,
   materials,
   purchases,
-  salaryRunItems,
-  salaryRuns,
+  salaryPayments,
+  siteSales,
   stockMovements,
   suppliers,
   users,
+  workerAdvances,
+  workerCategories,
   workers,
 } from "@construction-erp/db/schema";
 import { type SQL, and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
@@ -231,6 +233,7 @@ async function attendanceRegister(ctx: DatasetContext): Promise<ReportDataset> {
     .select({
       date: attendance.attendanceDate,
       worker: workers.name,
+      category: workerCategories.name,
       trade: workers.trade,
       status: attendance.status,
       overtimeHours: attendance.overtimeHours,
@@ -238,6 +241,7 @@ async function attendanceRegister(ctx: DatasetContext): Promise<ReportDataset> {
     })
     .from(attendance)
     .leftJoin(workers, eq(workers.id, attendance.workerId))
+    .leftJoin(workerCategories, eq(workerCategories.id, workers.categoryId))
     .where(and(...filters))
     .orderBy(desc(attendance.attendanceDate), asc(workers.name))
     .limit(MAX_EXPORT_ROWS);
@@ -248,7 +252,7 @@ async function attendanceRegister(ctx: DatasetContext): Promise<ReportDataset> {
     columns: [
       { key: "date", label: "Date", type: "date" },
       { key: "worker", label: "Worker", weight: 1.6 },
-      { key: "trade", label: "Trade" },
+      { key: "category", label: "Category" },
       { key: "status", label: "Status" },
       { key: "ot", label: "OT Hours", type: "number" },
       { key: "approved", label: "Approved" },
@@ -256,7 +260,7 @@ async function attendanceRegister(ctx: DatasetContext): Promise<ReportDataset> {
     rows: rows.map((r) => ({
       date: r.date,
       worker: r.worker ?? "—",
-      trade: r.trade ?? "—",
+      category: r.category ?? r.trade ?? "—",
       status: r.status,
       ot: num(r.overtimeHours),
       approved: r.approved ? "Yes" : "No",
@@ -266,70 +270,134 @@ async function attendanceRegister(ctx: DatasetContext): Promise<ReportDataset> {
 
 // ─── Salary register ──────────────────────────────────────────────────────────────────
 async function salaryRegister(ctx: DatasetContext): Promise<ReportDataset> {
-  // An item belongs to a run; include it when the run's period overlaps the filter.
-  const filters: SQL[] = [eq(salaryRunItems.siteId, ctx.siteId), isNull(salaryRuns.deletedAt)];
-  if (ctx.params.dateFrom) filters.push(gte(salaryRuns.periodEnd, ctx.params.dateFrom));
-  if (ctx.params.dateTo) filters.push(lte(salaryRuns.periodStart, ctx.params.dateTo));
+  const { dateFrom, dateTo } = ctx.params;
 
-  const rows = await ctx.db
+  // Workers (with category + rates).
+  const workerRows = await ctx.db
     .select({
-      periodStart: salaryRuns.periodStart,
-      periodEnd: salaryRuns.periodEnd,
-      worker: salaryRunItems.workerName,
-      payableDays: salaryRunItems.payableDays,
-      overtimeHours: salaryRunItems.overtimeHours,
-      gross: salaryRunItems.gross,
-      advanceDeducted: salaryRunItems.advanceDeducted,
-      netPayable: salaryRunItems.netPayable,
-      amountPaid: salaryRunItems.amountPaid,
-      paymentStatus: salaryRunItems.paymentStatus,
+      id: workers.id,
+      name: workers.name,
+      category: workerCategories.name,
+      trade: workers.trade,
+      dailyWage: workers.dailyWage,
+      overtimeRate: workers.overtimeRate,
     })
-    .from(salaryRunItems)
-    .innerJoin(salaryRuns, eq(salaryRuns.id, salaryRunItems.runId))
-    .where(and(...filters))
-    .orderBy(desc(salaryRuns.periodStart), asc(salaryRunItems.workerName))
+    .from(workers)
+    .leftJoin(workerCategories, eq(workerCategories.id, workers.categoryId))
+    .where(and(eq(workers.siteId, ctx.siteId), isNull(workers.deletedAt)))
+    .orderBy(asc(workers.name))
     .limit(MAX_EXPORT_ROWS);
 
-  const totals = { gross: 0, advance: 0, net: 0, paid: 0 };
-  const dataRows = rows.map((r) => {
-    totals.gross += num(r.gross);
-    totals.advance += num(r.advanceDeducted);
-    totals.net += num(r.netPayable);
-    totals.paid += num(r.amountPaid);
-    return {
-      period: `${r.periodStart} – ${r.periodEnd}`,
-      worker: r.worker,
-      days: num(r.payableDays),
-      ot: num(r.overtimeHours),
-      gross: num(r.gross),
-      advance: num(r.advanceDeducted),
-      net: num(r.netPayable),
-      paid: num(r.amountPaid),
-      status: r.paymentStatus,
-    };
-  });
+  // Attendance in range → present/half/OT per worker.
+  const attFilters: SQL[] = [eq(attendance.siteId, ctx.siteId), isNull(attendance.deletedAt)];
+  if (dateFrom) attFilters.push(gte(attendance.attendanceDate, dateFrom));
+  if (dateTo) attFilters.push(lte(attendance.attendanceDate, dateTo));
+  const attRows = await ctx.db
+    .select({
+      workerId: attendance.workerId,
+      status: attendance.status,
+      ot: attendance.overtimeHours,
+    })
+    .from(attendance)
+    .where(and(...attFilters));
+  const att = new Map<string, { present: number; half: number; ot: number }>();
+  for (const r of attRows) {
+    const a = att.get(r.workerId) ?? { present: 0, half: 0, ot: 0 };
+    if (r.status === "present") a.present += 1;
+    else if (r.status === "half_day") a.half += 1;
+    a.ot += num(r.ot);
+    att.set(r.workerId, a);
+  }
+
+  // Advances dated in range, summed per worker.
+  const advFilters: SQL[] = [
+    eq(workerAdvances.siteId, ctx.siteId),
+    isNull(workerAdvances.deletedAt),
+  ];
+  if (dateFrom) advFilters.push(gte(workerAdvances.advanceDate, dateFrom));
+  if (dateTo) advFilters.push(lte(workerAdvances.advanceDate, dateTo));
+  const advRows = await ctx.db
+    .select({ workerId: workerAdvances.workerId, amount: workerAdvances.amount })
+    .from(workerAdvances)
+    .where(and(...advFilters));
+  const adv = new Map<string, number>();
+  for (const r of advRows) adv.set(r.workerId, (adv.get(r.workerId) ?? 0) + num(r.amount));
+
+  // Payments paid in range, summed per worker.
+  const payFilters: SQL[] = [
+    eq(salaryPayments.siteId, ctx.siteId),
+    isNull(salaryPayments.deletedAt),
+  ];
+  if (dateFrom) payFilters.push(gte(salaryPayments.paidDate, dateFrom));
+  if (dateTo) payFilters.push(lte(salaryPayments.paidDate, dateTo));
+  const payRows = await ctx.db
+    .select({ workerId: salaryPayments.workerId, amount: salaryPayments.amount })
+    .from(salaryPayments)
+    .where(and(...payFilters));
+  const paid = new Map<string, number>();
+  for (const r of payRows) paid.set(r.workerId, (paid.get(r.workerId) ?? 0) + num(r.amount));
+
+  const totals = { gross: 0, advance: 0, net: 0, paid: 0, balance: 0 };
+  const dataRows: Array<Record<string, ReportCell>> = [];
+  for (const w of workerRows) {
+    const a = att.get(w.id) ?? { present: 0, half: 0, ot: 0 };
+    const advances = round2(adv.get(w.id) ?? 0);
+    const paidAmt = round2(paid.get(w.id) ?? 0);
+    const days = a.present + 0.5 * a.half;
+    // Skip workers with no activity in the range so the register stays readable.
+    if (days === 0 && advances === 0 && paidAmt === 0) continue;
+
+    const dailyWage = num(w.dailyWage);
+    const otRate = w.overtimeRate == null ? 0 : num(w.overtimeRate);
+    const gross = round2(days * dailyWage + a.ot * otRate);
+    const net = round2(gross - advances);
+    const balance = round2(net - paidAmt);
+    const status =
+      net <= 0 ? "paid" : paidAmt <= 0 ? "unpaid" : paidAmt >= net ? "paid" : "partial";
+
+    totals.gross += gross;
+    totals.advance += advances;
+    totals.net += net;
+    totals.paid += paidAmt;
+    totals.balance += balance;
+
+    dataRows.push({
+      worker: w.name,
+      category: w.category ?? w.trade ?? "—",
+      days,
+      ot: round2(a.ot),
+      gross,
+      advance: advances,
+      net,
+      paid: paidAmt,
+      balance,
+      status,
+    });
+  }
 
   return {
     title: "Salary Register",
-    subtitle: withTruncationNote(periodSubtitle(ctx, true), rows.length),
+    subtitle: withTruncationNote(periodSubtitle(ctx, true), dataRows.length),
     columns: [
-      { key: "period", label: "Period", weight: 1.6 },
       { key: "worker", label: "Worker", weight: 1.6 },
+      { key: "category", label: "Category" },
       { key: "days", label: "Days", type: "number" },
       { key: "ot", label: "OT Hrs", type: "number" },
       { key: "gross", label: "Gross", type: "money" },
       { key: "advance", label: "Advance", type: "money" },
       { key: "net", label: "Net", type: "money" },
       { key: "paid", label: "Paid", type: "money" },
+      { key: "balance", label: "Balance", type: "money" },
       { key: "status", label: "Status" },
     ],
     rows: dataRows,
     totals: {
-      period: "Total",
+      worker: "Total",
       gross: round2(totals.gross),
       advance: round2(totals.advance),
       net: round2(totals.net),
       paid: round2(totals.paid),
+      balance: round2(totals.balance),
     },
   };
 }
@@ -506,6 +574,76 @@ async function supplierLedger(ctx: DatasetContext): Promise<ReportDataset> {
   };
 }
 
+// ─── Sales register ───────────────────────────────────────────────────────────────────
+async function salesRegister(ctx: DatasetContext): Promise<ReportDataset> {
+  const filters: SQL[] = [eq(siteSales.siteId, ctx.siteId), isNull(siteSales.deletedAt)];
+  if (ctx.params.dateFrom) filters.push(gte(siteSales.saleDate, ctx.params.dateFrom));
+  if (ctx.params.dateTo) filters.push(lte(siteSales.saleDate, ctx.params.dateTo));
+
+  const rows = await ctx.db
+    .select({
+      date: siteSales.saleDate,
+      item: siteSales.itemDescription,
+      quantity: siteSales.quantity,
+      unit: siteSales.unit,
+      rate: siteSales.ratePerUnit,
+      total: siteSales.totalAmount,
+      buyer: siteSales.buyerName,
+      received: siteSales.amountReceived,
+      status: siteSales.paymentStatus,
+    })
+    .from(siteSales)
+    .where(and(...filters))
+    .orderBy(desc(siteSales.saleDate), desc(siteSales.createdAt))
+    .limit(MAX_EXPORT_ROWS);
+
+  const totals = { total: 0, received: 0, outstanding: 0 };
+  const dataRows = rows.map((r) => {
+    const total = num(r.total);
+    const received = num(r.received);
+    const outstanding = round2(total - received);
+    totals.total += total;
+    totals.received += received;
+    totals.outstanding += outstanding;
+    return {
+      date: r.date,
+      item: r.item,
+      qty: num(r.quantity),
+      unit: r.unit,
+      rate: num(r.rate),
+      total,
+      buyer: r.buyer ?? "—",
+      received,
+      outstanding,
+      status: r.status,
+    };
+  });
+
+  return {
+    title: "Sales Register",
+    subtitle: withTruncationNote(periodSubtitle(ctx, true), rows.length),
+    columns: [
+      { key: "date", label: "Date", type: "date" },
+      { key: "item", label: "Item", weight: 1.8 },
+      { key: "qty", label: "Qty", type: "number" },
+      { key: "unit", label: "Unit" },
+      { key: "rate", label: "Rate", type: "money" },
+      { key: "total", label: "Total", type: "money" },
+      { key: "buyer", label: "Buyer", weight: 1.4 },
+      { key: "received", label: "Received", type: "money" },
+      { key: "outstanding", label: "Outstanding", type: "money" },
+      { key: "status", label: "Payment" },
+    ],
+    rows: dataRows,
+    totals: {
+      date: "Total",
+      total: round2(totals.total),
+      received: round2(totals.received),
+      outstanding: round2(totals.outstanding),
+    },
+  };
+}
+
 /** Registry: report type key → dataset builder. */
 export const DATASET_BUILDERS: Record<string, (ctx: DatasetContext) => Promise<ReportDataset>> = {
   dpr_log: dprLog,
@@ -514,6 +652,7 @@ export const DATASET_BUILDERS: Record<string, (ctx: DatasetContext) => Promise<R
   attendance_register: attendanceRegister,
   salary_register: salaryRegister,
   expense_register: expenseRegister,
+  sales_register: salesRegister,
   purchase_register: purchaseRegister,
   supplier_ledger: supplierLedger,
 };

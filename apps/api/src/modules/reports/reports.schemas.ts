@@ -60,7 +60,7 @@ export const REPORT_TYPES: ReportTypeDef[] = [
     label: "Salary register",
     module: "salary",
     dateRange: true,
-    description: "Payslips from salary runs overlapping a date range.",
+    description: "Per-worker pay from attendance, advances, and payments over a date range.",
   },
   {
     key: "expense_register",
@@ -68,6 +68,13 @@ export const REPORT_TYPES: ReportTypeDef[] = [
     module: "expenses",
     dateRange: true,
     description: "Site expenses and petty cash over a date range.",
+  },
+  {
+    key: "sales_register",
+    label: "Sales register",
+    module: "selling",
+    dateRange: true,
+    description: "Items sold from inventory with amounts received and outstanding.",
   },
   {
     key: "purchase_register",
