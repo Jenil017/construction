@@ -7,6 +7,15 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const personSchema = z.object({ id: z.string().uuid(), name: z.string() });
 
+// ─── Worker categories ─────────────────────────────────────────────────────────
+export const workerCategorySchema = z
+  .object({ id: z.string().uuid(), name: z.string() })
+  .openapi("WorkerCategory");
+
+export const createWorkerCategoryBodySchema = z
+  .object({ name: z.string().min(1).max(80) })
+  .openapi("CreateWorkerCategoryRequest");
+
 // ─── Workers ───────────────────────────────────────────────────────────────────
 export const workerIdParamSchema = z.object({
   id: z
@@ -21,6 +30,9 @@ export const workerSchema = z
     siteId: z.string().uuid(),
     name: z.string(),
     phone: z.string().nullable(),
+    categoryId: z.string().uuid().nullable(),
+    /** Category name (falls back to the legacy free-text trade). */
+    category: z.string().nullable(),
     trade: z.string().nullable(),
     dailyWage: z.number(),
     overtimeRate: z.number().nullable(),
@@ -31,6 +43,7 @@ export const workerSchema = z
 
 const workerFields = {
   phone: z.string().max(20).nullable().optional(),
+  categoryId: z.string().uuid().nullable().optional(),
   trade: z.string().max(80).nullable().optional(),
   overtimeRate: z.number().nonnegative().nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
@@ -53,7 +66,7 @@ export const updateWorkerBodySchema = z
   .openapi("UpdateWorkerRequest");
 
 export const listWorkersQuerySchema = paginationQuerySchema.extend({
-  search: z.string().optional().openapi({ description: "Match name, phone, or trade." }),
+  search: z.string().optional().openapi({ description: "Match name, phone, or category." }),
 });
 
 // ─── Attendance ──────────────────────────────────────────────────────────────────
@@ -112,43 +125,6 @@ export const approveAttendanceBodySchema = z
 export const approveAttendanceResultSchema = z
   .object({ date: z.string(), approved: z.number() })
   .openapi("ApproveAttendanceResult");
-
-// ─── Advances ────────────────────────────────────────────────────────────────────
-export const advanceIdParamSchema = z.object({
-  id: z
-    .string()
-    .uuid()
-    .openapi({ param: { name: "id", in: "path" } }),
-});
-
-export const advanceSchema = z
-  .object({
-    id: z.string().uuid(),
-    siteId: z.string().uuid(),
-    workerId: z.string().uuid(),
-    workerName: z.string().nullable(),
-    amount: z.number(),
-    advanceDate: z.string(),
-    note: z.string().nullable(),
-    settled: z.boolean(),
-    createdBy: personSchema.nullable(),
-    createdAt: z.string(),
-  })
-  .openapi("WorkerAdvance");
-
-export const listAdvancesQuerySchema = paginationQuerySchema.extend({
-  workerId: z.string().uuid().optional(),
-  settled: z.enum(["true", "false"]).optional(),
-});
-
-export const createAdvanceBodySchema = z
-  .object({
-    workerId: z.string().uuid(),
-    amount: z.number().positive(),
-    advanceDate: z.string().regex(DATE_RE).optional(),
-    note: z.string().max(200).nullable().optional(),
-  })
-  .openapi("CreateAdvanceRequest");
 
 export const deleteResultSchema = z
   .object({ id: z.string().uuid(), deleted: z.boolean() })

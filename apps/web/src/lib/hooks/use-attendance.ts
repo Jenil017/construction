@@ -10,11 +10,18 @@ export interface Person {
   name: string;
 }
 
+export interface WorkerCategory {
+  id: string;
+  name: string;
+}
+
 export interface Worker {
   id: string;
   siteId: string;
   name: string;
   phone: string | null;
+  categoryId: string | null;
+  category: string | null;
   trade: string | null;
   dailyWage: number;
   overtimeRate: number | null;
@@ -42,24 +49,11 @@ export interface WorkerDetail extends Worker {
   outstandingAdvances: number;
 }
 
-export interface WorkerAdvance {
-  id: string;
-  siteId: string;
-  workerId: string;
-  workerName: string | null;
-  amount: number;
-  advanceDate: string;
-  note: string | null;
-  settled: boolean;
-  createdBy: Person | null;
-  createdAt: string;
-}
-
 export interface CreateWorkerInput {
   name: string;
   dailyWage: number;
   phone?: string | null;
-  trade?: string | null;
+  categoryId?: string | null;
   overtimeRate?: number | null;
   notes?: string | null;
 }
@@ -88,19 +82,27 @@ export interface MarkAttendanceResult {
   skippedApproved: number;
 }
 
-export interface AdvanceListParams {
-  workerId?: string;
-  settled?: "true" | "false";
-}
-
-export interface CreateAdvanceInput {
-  workerId: string;
-  amount: number;
-  advanceDate?: string;
-  note?: string | null;
-}
-
 const KEY = ["attendance"] as const;
+
+// ─── Worker categories ─────────────────────────────────────────────────────────
+export function useWorkerCategories() {
+  return useQuery({
+    queryKey: [...KEY, "categories"],
+    queryFn: () => apiFetch<WorkerCategory[]>("/attendance/categories"),
+  });
+}
+
+export function useCreateWorkerCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      apiFetch<WorkerCategory>("/attendance/categories", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...KEY, "categories"] }),
+  });
+}
 
 // ─── Workers ───────────────────────────────────────────────────────────────────
 export function useWorkers(params: { search?: string } = {}) {
@@ -185,42 +187,6 @@ export function useApproveAttendance() {
       apiFetch<{ date: string; approved: number }>("/attendance/approve", {
         method: "POST",
         body: JSON.stringify(body),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
-  });
-}
-
-// ─── Advances ────────────────────────────────────────────────────────────────────
-export function useAdvances(params: AdvanceListParams = {}) {
-  return useQuery({
-    queryKey: [...KEY, "advances", params],
-    queryFn: () => {
-      const qs = new URLSearchParams({ pageSize: "100" });
-      if (params.workerId) qs.set("workerId", params.workerId);
-      if (params.settled) qs.set("settled", params.settled);
-      return apiFetch<WorkerAdvance[]>(`/attendance/advances?${qs.toString()}`);
-    },
-  });
-}
-
-export function useCreateAdvance() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CreateAdvanceInput) =>
-      apiFetch<WorkerAdvance>("/attendance/advances", {
-        method: "POST",
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
-  });
-}
-
-export function useDeleteAdvance() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      apiFetch<{ id: string; deleted: boolean }>(`/attendance/advances/${id}`, {
-        method: "DELETE",
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });

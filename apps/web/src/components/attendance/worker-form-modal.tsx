@@ -4,15 +4,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
+import { Select } from "@/components/ui/select";
 import { ApiError } from "@/lib/api-client";
 import {
   type CreateWorkerInput,
   type UpdateWorkerInput,
   type Worker,
   useCreateWorker,
+  useCreateWorkerCategory,
   useUpdateWorker,
+  useWorkerCategories,
 } from "@/lib/hooks/use-attendance";
-import { HardHat } from "lucide-react";
+import { HardHat, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface WorkerFormModalProps {
@@ -31,25 +34,47 @@ export function WorkerFormModal({ open, onClose, worker }: WorkerFormModalProps)
   const isEdit = !!worker;
   const createWorker = useCreateWorker();
   const updateWorker = useUpdateWorker();
+  const { data: categories } = useWorkerCategories();
+  const createCategory = useCreateWorkerCategory();
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [trade, setTrade] = useState("");
+  const [categoryId, setCategoryId] = useState("");
   const [dailyWage, setDailyWage] = useState("");
   const [overtimeRate, setOvertimeRate] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  // Inline "add category" state.
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [newCategory, setNewCategory] = useState("");
 
   useEffect(() => {
     if (!open) return;
     setError(null);
     setName(worker?.name ?? "");
     setPhone(worker?.phone ?? "");
-    setTrade(worker?.trade ?? "");
+    setCategoryId(worker?.categoryId ?? "");
     setDailyWage(worker?.dailyWage != null ? String(worker.dailyWage) : "");
     setOvertimeRate(worker?.overtimeRate != null ? String(worker.overtimeRate) : "");
     setNotes(worker?.notes ?? "");
+    setAddingCategory(false);
+    setNewCategory("");
   }, [open, worker]);
+
+  const addCategory = async () => {
+    const trimmed = newCategory.trim();
+    if (!trimmed) return;
+    setError(null);
+    try {
+      const created = await createCategory.mutateAsync(trimmed);
+      setCategoryId(created.id);
+      setAddingCategory(false);
+      setNewCategory("");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not add the category.");
+    }
+  };
 
   const submit = async () => {
     setError(null);
@@ -68,27 +93,20 @@ export function WorkerFormModal({ open, onClose, worker }: WorkerFormModalProps)
       return;
     }
 
+    const common = {
+      name: name.trim(),
+      dailyWage: wage,
+      phone: phone.trim() || null,
+      categoryId: categoryId || null,
+      overtimeRate: ot,
+      notes: notes.trim() || null,
+    };
+
     try {
       if (isEdit && worker) {
-        const body: UpdateWorkerInput = {
-          name: name.trim(),
-          dailyWage: wage,
-          phone: phone.trim() || null,
-          trade: trade.trim() || null,
-          overtimeRate: ot,
-          notes: notes.trim() || null,
-        };
-        await updateWorker.mutateAsync({ id: worker.id, body });
+        await updateWorker.mutateAsync({ id: worker.id, body: common as UpdateWorkerInput });
       } else {
-        const body: CreateWorkerInput = {
-          name: name.trim(),
-          dailyWage: wage,
-          phone: phone.trim() || null,
-          trade: trade.trim() || null,
-          overtimeRate: ot,
-          notes: notes.trim() || null,
-        };
-        await createWorker.mutateAsync(body);
+        await createWorker.mutateAsync(common as CreateWorkerInput);
       }
       onClose();
     } catch (e) {
@@ -127,17 +145,62 @@ export function WorkerFormModal({ open, onClose, worker }: WorkerFormModalProps)
               placeholder="e.g. Ramesh Patel"
             />
           </div>
+
           <div className="space-y-1.5">
-            <Label htmlFor="wk-trade">Trade</Label>
-            <Input
-              id="wk-trade"
-              value={trade}
-              onChange={(e) => setTrade(e.target.value)}
-              placeholder="Mason, Helper, Carpenter…"
-            />
+            <Label htmlFor="wk-category">Category</Label>
+            {addingCategory ? (
+              <div className="flex gap-2">
+                <Input
+                  id="wk-new-category"
+                  value={newCategory}
+                  onChange={(e) => setNewCategory(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addCategory();
+                    }
+                  }}
+                  placeholder="New category"
+                  autoFocus
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={addCategory}
+                  disabled={createCategory.isPending || !newCategory.trim()}
+                >
+                  {createCategory.isPending ? "…" : "Add"}
+                </Button>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <Select
+                  id="wk-category"
+                  value={categoryId}
+                  onChange={(e) => setCategoryId(e.target.value)}
+                  className="flex-1"
+                >
+                  <option value="">— Select —</option>
+                  {(categories ?? []).map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setAddingCategory(true)}
+                  title="Add a new category"
+                >
+                  <Plus className="size-4" />
+                </Button>
+              </div>
+            )}
           </div>
+
           <div className="space-y-1.5">
-            <Label htmlFor="wk-phone">Phone</Label>
+            <Label htmlFor="wk-phone">Mobile number</Label>
             <Input
               id="wk-phone"
               value={phone}
@@ -145,6 +208,7 @@ export function WorkerFormModal({ open, onClose, worker }: WorkerFormModalProps)
               placeholder="Optional"
             />
           </div>
+
           <div className="space-y-1.5">
             <Label htmlFor="wk-wage">Daily wage (₹)</Label>
             <Input
@@ -157,6 +221,7 @@ export function WorkerFormModal({ open, onClose, worker }: WorkerFormModalProps)
               placeholder="e.g. 600"
             />
           </div>
+
           <div className="space-y-1.5">
             <Label htmlFor="wk-ot">Overtime rate (₹/hr)</Label>
             <Input
@@ -169,6 +234,7 @@ export function WorkerFormModal({ open, onClose, worker }: WorkerFormModalProps)
               placeholder="Optional"
             />
           </div>
+
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="wk-notes">Notes</Label>
             <Input

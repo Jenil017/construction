@@ -1,4 +1,10 @@
-import { attendance, users, workerAdvances, workers } from "@construction-erp/db/schema";
+import {
+  attendance,
+  users,
+  workerAdvances,
+  workerCategories,
+  workers,
+} from "@construction-erp/db/schema";
 import { apiErrorSchema, apiSuccessSchema, buildPaginationMeta } from "@construction-erp/shared";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import {
@@ -27,20 +33,18 @@ import { requireSiteContext } from "../../common/middleware/require-site-context
 import type { Env } from "../../env";
 import {
   type ATTENDANCE_STATUSES,
-  advanceIdParamSchema,
-  advanceSchema,
   approveAttendanceBodySchema,
   approveAttendanceResultSchema,
   attendanceSchema,
-  createAdvanceBodySchema,
   createWorkerBodySchema,
+  createWorkerCategoryBodySchema,
   deleteResultSchema,
-  listAdvancesQuerySchema,
   listAttendanceQuerySchema,
   listWorkersQuerySchema,
   markAttendanceBodySchema,
   markAttendanceResultSchema,
   updateWorkerBodySchema,
+  workerCategorySchema,
   workerDetailSchema,
   workerIdParamSchema,
   workerSchema,
@@ -48,22 +52,23 @@ import {
 
 export const attendanceRoutes = new OpenAPIHono<Env>();
 
-// User-table aliases for the "marked by" / "approved by" / advance-creator joins.
+// User-table aliases for the "marked by" / "approved by" joins.
 const markedBy = alias(users, "att_marked_by");
 const approvedBy = alias(users, "att_approved_by");
-const advCreator = alias(users, "adv_creator");
 
 /** Round to 2 decimals (hours / money) to avoid float artifacts. */
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 /** Today as YYYY-MM-DD. */
 const today = () => new Date().toISOString().slice(0, 10);
 
-// ─── Workers ───────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Workers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 interface WorkerRow {
   id: string;
   siteId: string;
   name: string;
   phone: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
   trade: string | null;
   dailyWage: string;
   overtimeRate: string | null;
@@ -71,12 +76,29 @@ interface WorkerRow {
   createdAt: Date;
 }
 
+const workerColumns = {
+  id: workers.id,
+  siteId: workers.siteId,
+  name: workers.name,
+  phone: workers.phone,
+  categoryId: workers.categoryId,
+  categoryName: workerCategories.name,
+  trade: workers.trade,
+  dailyWage: workers.dailyWage,
+  overtimeRate: workers.overtimeRate,
+  notes: workers.notes,
+  createdAt: workers.createdAt,
+};
+
 function serializeWorker(row: WorkerRow) {
   return {
     id: row.id,
     siteId: row.siteId,
     name: row.name,
     phone: row.phone,
+    categoryId: row.categoryId,
+    // Category name; falls back to the legacy free-text trade for older workers.
+    category: row.categoryName ?? row.trade ?? null,
     trade: row.trade,
     dailyWage: Number(row.dailyWage),
     overtimeRate: row.overtimeRate != null ? Number(row.overtimeRate) : null,
@@ -85,6 +107,7 @@ function serializeWorker(row: WorkerRow) {
   };
 }
 
+/** Raw worker row (for guards / FK checks), scoped to the site. */
 async function loadWorkerRow(db: DbClient, siteId: string, id: string) {
   const [row] = await db
     .select()
@@ -92,6 +115,37 @@ async function loadWorkerRow(db: DbClient, siteId: string, id: string) {
     .where(and(eq(workers.id, id), eq(workers.siteId, siteId), isNull(workers.deletedAt)))
     .limit(1);
   return row ?? null;
+}
+
+/** Serialized worker (with category name) for responses. */
+async function loadWorkerJoined(db: DbClient, siteId: string, id: string) {
+  const [row] = await db
+    .select(workerColumns)
+    .from(workers)
+    .leftJoin(workerCategories, eq(workerCategories.id, workers.categoryId))
+    .where(and(eq(workers.id, id), eq(workers.siteId, siteId), isNull(workers.deletedAt)))
+    .limit(1);
+  return row ? serializeWorker(row as WorkerRow) : null;
+}
+
+/** Reject a category that isn't a live category on this site. */
+async function assertSiteCategory(db: DbClient, siteId: string, categoryId: string) {
+  const [row] = await db
+    .select({ id: workerCategories.id })
+    .from(workerCategories)
+    .where(
+      and(
+        eq(workerCategories.id, categoryId),
+        eq(workerCategories.siteId, siteId),
+        isNull(workerCategories.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!row) {
+    throw new ValidationError("That category is not on this site.", {
+      fields: { categoryId: "Unknown category." },
+    });
+  }
 }
 
 const listWorkersRoute = createRoute({
@@ -137,8 +191,9 @@ attendanceRoutes.openapi(listWorkersRoute, async (c) => {
 
   const order = sortOrder === "desc" ? desc(workers.name) : asc(workers.name);
   const rows = await db
-    .select()
+    .select(workerColumns)
     .from(workers)
+    .leftJoin(workerCategories, eq(workerCategories.id, workers.categoryId))
     .where(whereClause)
     .orderBy(order)
     .limit(pageSize)
@@ -180,13 +235,16 @@ attendanceRoutes.openapi(createWorkerRoute, async (c) => {
   const meta = getRequestMeta(c);
   const siteId = auth.siteId as string;
 
-  const created = await db.transaction(async (tx) => {
+  if (body.categoryId) await assertSiteCategory(db, siteId, body.categoryId);
+
+  const createdId = await db.transaction(async (tx) => {
     const [row] = await tx
       .insert(workers)
       .values({
         siteId,
         name: body.name,
         phone: body.phone ?? null,
+        categoryId: body.categoryId ?? null,
         trade: body.trade ?? null,
         dailyWage: String(round2(body.dailyWage)),
         overtimeRate: body.overtimeRate != null ? String(round2(body.overtimeRate)) : null,
@@ -201,15 +259,17 @@ attendanceRoutes.openapi(createWorkerRoute, async (c) => {
       action: "create",
       entityType: "worker",
       entityId: row.id,
-      after: { name: row.name, trade: row.trade },
+      after: { name: row.name },
       ip: meta.ip,
       userAgent: meta.userAgent,
       requestId: meta.requestId,
     });
-    return row;
+    return row.id;
   });
 
-  return c.json({ success: true as const, data: serializeWorker(created as WorkerRow) }, 201);
+  const data = await loadWorkerJoined(db, siteId, createdId);
+  if (!data) throw new NotFoundError("Worker not found.");
+  return c.json({ success: true as const, data }, 201);
 });
 
 const getWorkerRoute = createRoute({
@@ -239,8 +299,8 @@ attendanceRoutes.openapi(getWorkerRoute, async (c) => {
   const db = getDb(c);
   const siteId = auth.siteId as string;
 
-  const row = await loadWorkerRow(db, siteId, id);
-  if (!row) throw new NotFoundError("Worker not found.");
+  const worker = await loadWorkerJoined(db, siteId, id);
+  if (!worker) throw new NotFoundError("Worker not found.");
 
   const recentAttendance = await loadAttendanceRows(
     db,
@@ -264,7 +324,7 @@ attendanceRoutes.openapi(getWorkerRoute, async (c) => {
     {
       success: true as const,
       data: {
-        ...serializeWorker(row as WorkerRow),
+        ...worker,
         recentAttendance,
         outstandingAdvances: Number(adv?.total ?? 0),
       },
@@ -311,6 +371,10 @@ attendanceRoutes.openapi(updateWorkerRoute, async (c) => {
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) updates.name = body.name;
   if (body.phone !== undefined) updates.phone = body.phone;
+  if (body.categoryId !== undefined) {
+    if (body.categoryId) await assertSiteCategory(db, siteId, body.categoryId);
+    updates.categoryId = body.categoryId;
+  }
   if (body.trade !== undefined) updates.trade = body.trade;
   if (body.notes !== undefined) updates.notes = body.notes;
   if (body.dailyWage !== undefined) updates.dailyWage = String(round2(body.dailyWage));
@@ -328,7 +392,7 @@ attendanceRoutes.openapi(updateWorkerRoute, async (c) => {
       action: "update",
       entityType: "worker",
       entityId: id,
-      before: { name: existing.name, trade: existing.trade },
+      before: { name: existing.name },
       after: { name: body.name ?? existing.name },
       ip: meta.ip,
       userAgent: meta.userAgent,
@@ -336,9 +400,9 @@ attendanceRoutes.openapi(updateWorkerRoute, async (c) => {
     });
   });
 
-  const row = await loadWorkerRow(db, siteId, id);
-  if (!row) throw new NotFoundError("Worker not found.");
-  return c.json({ success: true as const, data: serializeWorker(row as WorkerRow) }, 200);
+  const data = await loadWorkerJoined(db, siteId, id);
+  if (!data) throw new NotFoundError("Worker not found.");
+  return c.json({ success: true as const, data }, 200);
 });
 
 const deleteWorkerRoute = createRoute({
@@ -391,7 +455,94 @@ attendanceRoutes.openapi(deleteWorkerRoute, async (c) => {
   return c.json({ success: true as const, data: { id, deleted: true } }, 200);
 });
 
-// ─── Attendance ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Worker categories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const listCategoriesRoute = createRoute({
+  method: "get",
+  path: "/attendance/categories",
+  tags: ["Attendance"],
+  summary: "List worker categories for the active site",
+  description: "Permission: attendance:view. The options behind the worker category dropdown.",
+  middleware: [requireAuth, requireSiteContext, requirePermission("attendance", "view")] as const,
+  responses: {
+    200: {
+      description: "Categories",
+      content: { "application/json": { schema: apiSuccessSchema(z.array(workerCategorySchema)) } },
+    },
+    403: {
+      description: "Permission denied",
+      content: { "application/json": { schema: apiErrorSchema } },
+    },
+  },
+});
+
+attendanceRoutes.openapi(listCategoriesRoute, async (c) => {
+  const auth = c.get("auth");
+  const db = getDb(c);
+  const siteId = auth.siteId as string;
+  const rows = await db
+    .select({ id: workerCategories.id, name: workerCategories.name })
+    .from(workerCategories)
+    .where(and(eq(workerCategories.siteId, siteId), isNull(workerCategories.deletedAt)))
+    .orderBy(asc(workerCategories.name));
+  return c.json({ success: true as const, data: rows }, 200);
+});
+
+const createCategoryRoute = createRoute({
+  method: "post",
+  path: "/attendance/categories",
+  tags: ["Attendance"],
+  summary: "Add a worker category",
+  description:
+    "Permission: attendance:create. Adds a category to this site's list (idempotent on name).",
+  middleware: [requireAuth, requireSiteContext, requirePermission("attendance", "create")] as const,
+  request: {
+    body: {
+      content: { "application/json": { schema: createWorkerCategoryBodySchema } },
+      required: true,
+    },
+  },
+  responses: {
+    201: {
+      description: "Created",
+      content: { "application/json": { schema: apiSuccessSchema(workerCategorySchema) } },
+    },
+    403: {
+      description: "Permission denied",
+      content: { "application/json": { schema: apiErrorSchema } },
+    },
+  },
+});
+
+attendanceRoutes.openapi(createCategoryRoute, async (c) => {
+  const body = c.req.valid("json");
+  const auth = c.get("auth");
+  const db = getDb(c);
+  const siteId = auth.siteId as string;
+  const name = body.name.trim();
+
+  // If the category already exists on this site (case-insensitive), return it.
+  const [existing] = await db
+    .select({ id: workerCategories.id, name: workerCategories.name })
+    .from(workerCategories)
+    .where(
+      and(
+        eq(workerCategories.siteId, siteId),
+        ilike(workerCategories.name, name),
+        isNull(workerCategories.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (existing) return c.json({ success: true as const, data: existing }, 201);
+
+  const [row] = await db
+    .insert(workerCategories)
+    .values({ siteId, name })
+    .returning({ id: workerCategories.id, name: workerCategories.name });
+  if (!row) throw new ConflictError("Could not add the category. Please try again.");
+  return c.json({ success: true as const, data: row }, 201);
+});
+
+// â”€â”€â”€ Attendance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 interface AttendanceRow {
   id: string;
   siteId: string;
@@ -437,8 +588,10 @@ function serializeAttendance(row: AttendanceRow) {
     overtimeHours: Number(row.overtimeHours),
     note: row.note,
     approved: row.approved,
-    approvedBy: row.approvedById ? { id: row.approvedById, name: row.approvedByName ?? "—" } : null,
-    markedBy: row.markedById ? { id: row.markedById, name: row.markedByName ?? "—" } : null,
+    approvedBy: row.approvedById
+      ? { id: row.approvedById, name: row.approvedByName ?? "â€”" }
+      : null,
+    markedBy: row.markedById ? { id: row.markedById, name: row.markedByName ?? "â€”" } : null,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -692,249 +845,4 @@ attendanceRoutes.openapi(approveAttendanceRoute, async (c) => {
   });
 
   return c.json({ success: true as const, data: { date, approved: approvedCount } }, 200);
-});
-
-// ─── Advances ────────────────────────────────────────────────────────────────────
-interface AdvanceRow {
-  id: string;
-  siteId: string;
-  workerId: string;
-  workerName: string | null;
-  amount: string;
-  advanceDate: string;
-  note: string | null;
-  settledInRunId: string | null;
-  createdById: string;
-  createdByName: string | null;
-  createdAt: Date;
-}
-
-function serializeAdvance(row: AdvanceRow) {
-  return {
-    id: row.id,
-    siteId: row.siteId,
-    workerId: row.workerId,
-    workerName: row.workerName ?? null,
-    amount: Number(row.amount),
-    advanceDate: row.advanceDate,
-    note: row.note,
-    settled: row.settledInRunId != null,
-    createdBy: row.createdById ? { id: row.createdById, name: row.createdByName ?? "—" } : null,
-    createdAt: row.createdAt.toISOString(),
-  };
-}
-
-const advanceColumns = {
-  id: workerAdvances.id,
-  siteId: workerAdvances.siteId,
-  workerId: workerAdvances.workerId,
-  workerName: workers.name,
-  amount: workerAdvances.amount,
-  advanceDate: workerAdvances.advanceDate,
-  note: workerAdvances.note,
-  settledInRunId: workerAdvances.settledInRunId,
-  createdById: workerAdvances.createdByUserId,
-  createdByName: advCreator.name,
-  createdAt: workerAdvances.createdAt,
-};
-
-const listAdvancesRoute = createRoute({
-  method: "get",
-  path: "/attendance/advances",
-  tags: ["Attendance"],
-  summary: "List worker advances for the active site",
-  description: "Permission: attendance:view. Filter by worker and settled status.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("attendance", "view")] as const,
-  request: { query: listAdvancesQuerySchema },
-  responses: {
-    200: {
-      description: "A page of advances",
-      content: { "application/json": { schema: apiSuccessSchema(z.array(advanceSchema)) } },
-    },
-    403: {
-      description: "Permission denied",
-      content: { "application/json": { schema: apiErrorSchema } },
-    },
-  },
-});
-
-attendanceRoutes.openapi(listAdvancesRoute, async (c) => {
-  const { page, pageSize, workerId, settled } = c.req.valid("query");
-  const auth = c.get("auth");
-  const db = getDb(c);
-  const siteId = auth.siteId as string;
-
-  const filters = [eq(workerAdvances.siteId, siteId), isNull(workerAdvances.deletedAt)];
-  if (workerId) filters.push(eq(workerAdvances.workerId, workerId));
-  if (settled === "true") filters.push(sql`${workerAdvances.settledInRunId} IS NOT NULL`);
-  if (settled === "false") filters.push(isNull(workerAdvances.settledInRunId));
-  const whereClause = and(...filters);
-
-  const [totalRow] = await db.select({ value: count() }).from(workerAdvances).where(whereClause);
-  const total = totalRow?.value ?? 0;
-
-  const rows = await db
-    .select(advanceColumns)
-    .from(workerAdvances)
-    .innerJoin(workers, eq(workers.id, workerAdvances.workerId))
-    .leftJoin(advCreator, eq(advCreator.id, workerAdvances.createdByUserId))
-    .where(whereClause)
-    .orderBy(desc(workerAdvances.advanceDate), desc(workerAdvances.createdAt))
-    .limit(pageSize)
-    .offset((page - 1) * pageSize);
-
-  const data = rows.map((r) => serializeAdvance(r as AdvanceRow));
-  return c.json(
-    { success: true as const, data, meta: buildPaginationMeta(page, pageSize, total) },
-    200,
-  );
-});
-
-const createAdvanceRoute = createRoute({
-  method: "post",
-  path: "/attendance/advances",
-  tags: ["Attendance"],
-  summary: "Record a worker advance",
-  description: "Permission: attendance:create. Deducted from net pay at the next salary run.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("attendance", "create")] as const,
-  request: {
-    body: { content: { "application/json": { schema: createAdvanceBodySchema } }, required: true },
-  },
-  responses: {
-    201: {
-      description: "Created",
-      content: { "application/json": { schema: apiSuccessSchema(advanceSchema) } },
-    },
-    403: {
-      description: "Permission denied",
-      content: { "application/json": { schema: apiErrorSchema } },
-    },
-    404: {
-      description: "Worker not found",
-      content: { "application/json": { schema: apiErrorSchema } },
-    },
-  },
-});
-
-attendanceRoutes.openapi(createAdvanceRoute, async (c) => {
-  const body = c.req.valid("json");
-  const auth = c.get("auth");
-  const db = getDb(c);
-  const meta = getRequestMeta(c);
-  const siteId = auth.siteId as string;
-
-  const worker = await loadWorkerRow(db, siteId, body.workerId);
-  if (!worker) throw new NotFoundError("Worker not found.");
-
-  const created = await db.transaction(async (tx) => {
-    const [row] = await tx
-      .insert(workerAdvances)
-      .values({
-        siteId,
-        workerId: body.workerId,
-        amount: String(round2(body.amount)),
-        advanceDate: body.advanceDate ?? today(),
-        note: body.note ?? null,
-        createdByUserId: auth.userId,
-      })
-      .returning();
-    if (!row) throw new ConflictError("Could not record the advance. Please try again.");
-    await writeAudit(tx, {
-      siteId,
-      actorUserId: auth.userId,
-      module: "attendance",
-      action: "create",
-      entityType: "worker_advance",
-      entityId: row.id,
-      // No amount in the audit trail (sensitive payment data — see docs/architecter.md).
-      after: { workerId: body.workerId, advanceDate: row.advanceDate },
-      ip: meta.ip,
-      userAgent: meta.userAgent,
-      requestId: meta.requestId,
-    });
-    return row;
-  });
-
-  return c.json(
-    {
-      success: true as const,
-      data: serializeAdvance({
-        ...(created as unknown as AdvanceRow),
-        workerName: worker.name,
-        createdById: auth.userId,
-        createdByName: auth.name,
-      }),
-    },
-    201,
-  );
-});
-
-const deleteAdvanceRoute = createRoute({
-  method: "delete",
-  path: "/attendance/advances/{id}",
-  tags: ["Attendance"],
-  summary: "Delete an unsettled advance",
-  description:
-    "Permission: attendance:delete. A settled advance (already in a salary run) cannot be deleted.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("attendance", "delete")] as const,
-  request: { params: advanceIdParamSchema },
-  responses: {
-    200: {
-      description: "Deleted",
-      content: { "application/json": { schema: apiSuccessSchema(deleteResultSchema) } },
-    },
-    403: {
-      description: "Permission denied",
-      content: { "application/json": { schema: apiErrorSchema } },
-    },
-    404: { description: "Not found", content: { "application/json": { schema: apiErrorSchema } } },
-    409: {
-      description: "Already settled",
-      content: { "application/json": { schema: apiErrorSchema } },
-    },
-  },
-});
-
-attendanceRoutes.openapi(deleteAdvanceRoute, async (c) => {
-  const { id } = c.req.valid("param");
-  const auth = c.get("auth");
-  const db = getDb(c);
-  const meta = getRequestMeta(c);
-  const siteId = auth.siteId as string;
-
-  const [existing] = await db
-    .select()
-    .from(workerAdvances)
-    .where(
-      and(
-        eq(workerAdvances.id, id),
-        eq(workerAdvances.siteId, siteId),
-        isNull(workerAdvances.deletedAt),
-      ),
-    )
-    .limit(1);
-  if (!existing) throw new NotFoundError("Advance not found.");
-  if (existing.settledInRunId) {
-    throw new ConflictError(
-      "This advance was already settled in a salary run and cannot be deleted.",
-    );
-  }
-
-  await db.transaction(async (tx) => {
-    await tx.update(workerAdvances).set({ deletedAt: new Date() }).where(eq(workerAdvances.id, id));
-    await writeAudit(tx, {
-      siteId,
-      actorUserId: auth.userId,
-      module: "attendance",
-      action: "delete",
-      entityType: "worker_advance",
-      entityId: id,
-      after: { workerId: existing.workerId },
-      ip: meta.ip,
-      userAgent: meta.userAgent,
-      requestId: meta.requestId,
-    });
-  });
-
-  return c.json({ success: true as const, data: { id, deleted: true } }, 200);
 });

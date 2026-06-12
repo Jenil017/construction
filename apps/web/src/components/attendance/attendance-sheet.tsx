@@ -214,7 +214,7 @@ export function AttendanceSheet() {
                       ) : null}
                     </div>
                     <p className="truncate text-xs text-muted-foreground">
-                      {w.trade ?? "—"} · ₹{w.dailyWage}/day
+                      {w.category ?? "—"} · ₹{w.dailyWage}/day
                     </p>
                   </div>
 

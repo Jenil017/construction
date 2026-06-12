@@ -1,88 +1,120 @@
-import { paginationQuerySchema } from "@construction-erp/shared";
 import { z } from "@hono/zod-openapi";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MONTH_RE = /^\d{4}-\d{2}$/;
 export const PAYMENT_STATUSES = ["unpaid", "partial", "paid"] as const;
 
 const personSchema = z.object({ id: z.string().uuid(), name: z.string() });
 
-export const runIdParamSchema = z.object({
+export const salaryIdParamSchema = z.object({
   id: z
     .string()
     .uuid()
     .openapi({ param: { name: "id", in: "path" } }),
 });
 
-export const runItemParamSchema = z.object({
-  id: z
-    .string()
-    .uuid()
-    .openapi({ param: { name: "id", in: "path" } }),
-  itemId: z
-    .string()
-    .uuid()
-    .openapi({ param: { name: "itemId", in: "path" } }),
+// ─── Monthly per-worker view ─────────────────────────────────────────────────────
+export const monthQuerySchema = z.object({
+  month: z.string().regex(MONTH_RE).openapi({ description: "The month to compute, YYYY-MM." }),
 });
 
-export const salaryRunSchema = z
+export const salaryWorkerRowSchema = z
   .object({
-    id: z.string().uuid(),
-    siteId: z.string().uuid(),
-    periodStart: z.string(),
-    periodEnd: z.string(),
-    totalWorkers: z.number(),
-    totalGross: z.number(),
-    totalAdvances: z.number(),
-    totalNet: z.number(),
-    generatedBy: personSchema.nullable(),
-    createdAt: z.string(),
-  })
-  .openapi("SalaryRun");
-
-export const salaryRunItemSchema = z
-  .object({
-    id: z.string().uuid(),
-    runId: z.string().uuid(),
     workerId: z.string().uuid(),
     workerName: z.string(),
+    category: z.string().nullable(),
+    dailyWage: z.number(),
+    overtimeRate: z.number().nullable(),
     presentDays: z.number(),
     halfDays: z.number(),
     payableDays: z.number(),
     overtimeHours: z.number(),
-    dailyWage: z.number(),
-    overtimeRate: z.number().nullable(),
     gross: z.number(),
-    advanceDeducted: z.number(),
+    advances: z.number(),
     netPayable: z.number(),
-    amountPaid: z.number(),
+    paid: z.number(),
+    balance: z.number(),
     paymentStatus: z.enum(PAYMENT_STATUSES),
+  })
+  .openapi("SalaryWorkerRow");
+
+export const salaryMonthSchema = z
+  .object({
+    month: z.string(),
+    totals: z.object({
+      workers: z.number(),
+      gross: z.number(),
+      advances: z.number(),
+      netPayable: z.number(),
+      paid: z.number(),
+      balance: z.number(),
+    }),
+    workers: z.array(salaryWorkerRowSchema),
+  })
+  .openapi("SalaryMonth");
+
+// ─── Advances ──────────────────────────────────────────────────────────────────
+export const advanceSchema = z
+  .object({
+    id: z.string().uuid(),
+    siteId: z.string().uuid(),
+    workerId: z.string().uuid(),
+    workerName: z.string().nullable(),
+    amount: z.number(),
+    advanceDate: z.string(),
+    note: z.string().nullable(),
+    createdBy: personSchema.nullable(),
+    createdAt: z.string(),
+  })
+  .openapi("WorkerAdvance");
+
+export const listAdvancesQuerySchema = z.object({
+  workerId: z.string().uuid().optional(),
+  month: z.string().regex(MONTH_RE).optional(),
+});
+
+export const createAdvanceBodySchema = z
+  .object({
+    workerId: z.string().uuid(),
+    amount: z.number().positive(),
+    advanceDate: z.string().regex(DATE_RE).optional(),
+    note: z.string().max(200).nullable().optional(),
+  })
+  .openapi("CreateAdvanceRequest");
+
+// ─── Payments ────────────────────────────────────────────────────────────────────
+export const paymentSchema = z
+  .object({
+    id: z.string().uuid(),
+    siteId: z.string().uuid(),
+    workerId: z.string().uuid(),
+    workerName: z.string().nullable(),
+    periodMonth: z.string(),
+    amount: z.number(),
+    paidDate: z.string(),
     paymentMode: z.string().nullable(),
-    paidAt: z.string().nullable(),
+    note: z.string().nullable(),
+    createdBy: personSchema.nullable(),
+    createdAt: z.string(),
   })
-  .openapi("SalaryRunItem");
+  .openapi("SalaryPayment");
 
-export const salaryRunDetailSchema = salaryRunSchema
-  .extend({ items: z.array(salaryRunItemSchema) })
-  .openapi("SalaryRunDetail");
+export const listPaymentsQuerySchema = z.object({
+  workerId: z.string().uuid().optional(),
+  month: z.string().regex(MONTH_RE).optional(),
+});
 
-export const listRunsQuerySchema = paginationQuerySchema;
-
-export const generateRunBodySchema = z
+export const createPaymentBodySchema = z
   .object({
-    periodStart: z.string().regex(DATE_RE),
-    periodEnd: z.string().regex(DATE_RE),
-  })
-  .openapi("GenerateSalaryRunRequest");
-
-export const payItemBodySchema = z
-  .object({
-    /** Cumulative amount paid for this payslip (0 → unpaid, ≥ net → paid). */
-    amountPaid: z.number().nonnegative(),
+    workerId: z.string().uuid(),
+    periodMonth: z.string().regex(MONTH_RE),
+    amount: z.number().positive(),
+    paidDate: z.string().regex(DATE_RE).optional(),
     paymentMode: z.string().max(40).nullable().optional(),
-    paidAt: z.string().regex(DATE_RE).optional(),
+    note: z.string().max(200).nullable().optional(),
   })
-  .openapi("PaySalaryItemRequest");
+  .openapi("CreateSalaryPaymentRequest");
 
-export const deleteRunResultSchema = z
+export const deleteResultSchema = z
   .object({ id: z.string().uuid(), deleted: z.boolean() })
-  .openapi("DeleteSalaryRunResult");
+  .openapi("DeleteSalaryResult");

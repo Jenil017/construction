@@ -1,6 +1,7 @@
 import { index, numeric, pgTable, text, uuid, varchar } from "drizzle-orm/pg-core";
 import { primaryId, softDelete, timestamps } from "./_shared";
 import { sites } from "./sites";
+import { workerCategories } from "./worker-categories";
 
 /**
  * A worker on a site (the worker master for Attendance & Salary — see docs/prd.md
@@ -20,7 +21,12 @@ export const workers = pgTable(
       .references(() => sites.id, { onDelete: "cascade" }),
     name: varchar("name", { length: 160 }).notNull(),
     phone: varchar("phone", { length: 20 }),
-    // Trade / designation, e.g. "Mason", "Helper", "Carpenter".
+    // Category (Mason, Helper, Carpenter, …) — chosen from the per-site
+    // `worker_categories` list. Nullable; the legacy free-text `trade` is kept as a
+    // fallback for workers added before categories existed.
+    categoryId: uuid("category_id").references(() => workerCategories.id, {
+      onDelete: "set null",
+    }),
     trade: varchar("trade", { length: 80 }),
     dailyWage: numeric("daily_wage", { precision: 12, scale: 2 }).notNull().default("0"),
     overtimeRate: numeric("overtime_rate", { precision: 12, scale: 2 }),
@@ -31,6 +37,7 @@ export const workers = pgTable(
   (table) => [
     index("workers_site_idx").on(table.siteId),
     index("workers_site_name_idx").on(table.siteId, table.name),
+    index("workers_category_idx").on(table.categoryId),
   ],
 );
 

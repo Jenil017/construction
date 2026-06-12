@@ -1,18 +1,18 @@
 import {
   attendance,
-  salaryRunItems,
-  salaryRuns,
+  salaryPayments,
   users,
   workerAdvances,
+  workerCategories,
   workers,
 } from "@construction-erp/db/schema";
-import { apiErrorSchema, apiSuccessSchema, buildPaginationMeta } from "@construction-erp/shared";
+import { apiErrorSchema, apiSuccessSchema } from "@construction-erp/shared";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
-import { and, asc, count, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { writeAudit } from "../../common/audit";
 import { type DbClient, getDb } from "../../common/db";
-import { ConflictError, NotFoundError, ValidationError } from "../../common/errors";
+import { ConflictError, NotFoundError } from "../../common/errors";
 import { getRequestMeta } from "../../common/http/request-meta";
 import { idempotency } from "../../common/idempotency";
 import { requireAuth } from "../../common/middleware/require-auth";
@@ -21,135 +21,66 @@ import { requireSiteContext } from "../../common/middleware/require-site-context
 import type { Env } from "../../env";
 import {
   type PAYMENT_STATUSES,
-  deleteRunResultSchema,
-  generateRunBodySchema,
-  listRunsQuerySchema,
-  payItemBodySchema,
-  runIdParamSchema,
-  runItemParamSchema,
-  salaryRunDetailSchema,
-  salaryRunItemSchema,
-  salaryRunSchema,
+  advanceSchema,
+  createAdvanceBodySchema,
+  createPaymentBodySchema,
+  deleteResultSchema,
+  listAdvancesQuerySchema,
+  listPaymentsQuerySchema,
+  monthQuerySchema,
+  paymentSchema,
+  salaryIdParamSchema,
+  salaryMonthSchema,
 } from "./salary.schemas";
 
 export const salaryRoutes = new OpenAPIHono<Env>();
 
-const generator = alias(users, "salary_generator");
+const advCreator = alias(users, "adv_creator");
+const payCreator = alias(users, "pay_creator");
 
-/** Round money to 2 decimals to avoid float artifacts. */
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const today = () => new Date().toISOString().slice(0, 10);
 
-interface RunRow {
-  id: string;
-  siteId: string;
-  periodStart: string;
-  periodEnd: string;
-  totalWorkers: number;
-  totalGross: string;
-  totalAdvances: string;
-  totalNet: string;
-  generatedById: string;
-  generatedByName: string | null;
-  createdAt: Date;
+/** First and last day (YYYY-MM-DD) of a "YYYY-MM" month. */
+function monthBounds(month: string) {
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7));
+  // Date.UTC(y, m, 0) → day 0 of the *next* month = the last day of month m.
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { monthStart: `${month}-01`, monthEnd: `${month}-${String(lastDay).padStart(2, "0")}` };
 }
 
-const runColumns = {
-  id: salaryRuns.id,
-  siteId: salaryRuns.siteId,
-  periodStart: salaryRuns.periodStart,
-  periodEnd: salaryRuns.periodEnd,
-  totalWorkers: salaryRuns.totalWorkers,
-  totalGross: salaryRuns.totalGross,
-  totalAdvances: salaryRuns.totalAdvances,
-  totalNet: salaryRuns.totalNet,
-  generatedById: salaryRuns.generatedByUserId,
-  generatedByName: generator.name,
-  createdAt: salaryRuns.createdAt,
-};
-
-function serializeRun(row: RunRow) {
-  return {
-    id: row.id,
-    siteId: row.siteId,
-    periodStart: row.periodStart,
-    periodEnd: row.periodEnd,
-    totalWorkers: row.totalWorkers,
-    totalGross: Number(row.totalGross),
-    totalAdvances: Number(row.totalAdvances),
-    totalNet: Number(row.totalNet),
-    generatedBy: row.generatedById
-      ? { id: row.generatedById, name: row.generatedByName ?? "—" }
-      : null,
-    createdAt: row.createdAt.toISOString(),
-  };
+function derivePaymentStatus(net: number, paid: number): (typeof PAYMENT_STATUSES)[number] {
+  if (net <= 0) return "paid"; // nothing payable
+  if (paid <= 0) return "unpaid";
+  if (paid >= net) return "paid";
+  return "partial";
 }
 
-interface ItemRow {
-  id: string;
-  runId: string;
-  workerId: string;
-  workerName: string;
-  presentDays: number;
-  halfDays: number;
-  payableDays: string;
-  overtimeHours: string;
-  dailyWage: string;
-  overtimeRate: string | null;
-  gross: string;
-  advanceDeducted: string;
-  netPayable: string;
-  amountPaid: string;
-  paymentStatus: string;
-  paymentMode: string | null;
-  paidAt: Date | null;
-}
-
-function serializeItem(row: ItemRow) {
-  return {
-    id: row.id,
-    runId: row.runId,
-    workerId: row.workerId,
-    workerName: row.workerName,
-    presentDays: row.presentDays,
-    halfDays: row.halfDays,
-    payableDays: Number(row.payableDays),
-    overtimeHours: Number(row.overtimeHours),
-    dailyWage: Number(row.dailyWage),
-    overtimeRate: row.overtimeRate != null ? Number(row.overtimeRate) : null,
-    gross: Number(row.gross),
-    advanceDeducted: Number(row.advanceDeducted),
-    netPayable: Number(row.netPayable),
-    amountPaid: Number(row.amountPaid),
-    paymentStatus: row.paymentStatus as (typeof PAYMENT_STATUSES)[number],
-    paymentMode: row.paymentMode,
-    paidAt: row.paidAt ? row.paidAt.toISOString() : null,
-  };
-}
-
-async function loadRunRow(db: DbClient, siteId: string, id: string) {
+/** Load a live worker on this site (for FK checks on advances/payments). */
+async function loadWorker(db: DbClient, siteId: string, id: string) {
   const [row] = await db
-    .select(runColumns)
-    .from(salaryRuns)
-    .leftJoin(generator, eq(generator.id, salaryRuns.generatedByUserId))
-    .where(and(eq(salaryRuns.id, id), eq(salaryRuns.siteId, siteId), isNull(salaryRuns.deletedAt)))
+    .select({ id: workers.id, name: workers.name })
+    .from(workers)
+    .where(and(eq(workers.id, id), eq(workers.siteId, siteId), isNull(workers.deletedAt)))
     .limit(1);
   return row ?? null;
 }
 
-// ─── List runs ───────────────────────────────────────────────────────────────────
-const listRunsRoute = createRoute({
+// ─── Monthly per-worker view ─────────────────────────────────────────────────────
+const monthlyRoute = createRoute({
   method: "get",
-  path: "/salary/runs",
+  path: "/salary/monthly",
   tags: ["Salary"],
-  summary: "List salary runs for the active site",
-  description: "Permission: salary:view. Site-scoped, newest period first.",
+  summary: "Per-worker salary for a month",
+  description:
+    "Permission: salary:view. For the given month, returns every worker with days worked (from attendance), gross (days × wage + overtime), advances taken, net payable, amount paid, and balance.",
   middleware: [requireAuth, requireSiteContext, requirePermission("salary", "view")] as const,
-  request: { query: listRunsQuerySchema },
+  request: { query: monthQuerySchema },
   responses: {
     200: {
-      description: "A page of salary runs",
-      content: { "application/json": { schema: apiSuccessSchema(z.array(salaryRunSchema)) } },
+      description: "Monthly salary",
+      content: { "application/json": { schema: apiSuccessSchema(salaryMonthSchema) } },
     },
     403: {
       description: "Permission denied",
@@ -158,104 +89,29 @@ const listRunsRoute = createRoute({
   },
 });
 
-salaryRoutes.openapi(listRunsRoute, async (c) => {
-  const { page, pageSize, sortOrder } = c.req.valid("query");
+salaryRoutes.openapi(monthlyRoute, async (c) => {
+  const { month } = c.req.valid("query");
   const auth = c.get("auth");
   const db = getDb(c);
   const siteId = auth.siteId as string;
+  const { monthStart, monthEnd } = monthBounds(month);
 
-  const whereClause = and(eq(salaryRuns.siteId, siteId), isNull(salaryRuns.deletedAt));
-  const [totalRow] = await db.select({ value: count() }).from(salaryRuns).where(whereClause);
-  const total = totalRow?.value ?? 0;
+  const workerRows = await db
+    .select({
+      id: workers.id,
+      name: workers.name,
+      category: workerCategories.name,
+      trade: workers.trade,
+      dailyWage: workers.dailyWage,
+      overtimeRate: workers.overtimeRate,
+    })
+    .from(workers)
+    .leftJoin(workerCategories, eq(workerCategories.id, workers.categoryId))
+    .where(and(eq(workers.siteId, siteId), isNull(workers.deletedAt)))
+    .orderBy(asc(workers.name));
 
-  const dir = sortOrder === "asc" ? asc : desc;
-  const rows = await db
-    .select(runColumns)
-    .from(salaryRuns)
-    .leftJoin(generator, eq(generator.id, salaryRuns.generatedByUserId))
-    .where(whereClause)
-    .orderBy(dir(salaryRuns.periodStart), dir(salaryRuns.createdAt))
-    .limit(pageSize)
-    .offset((page - 1) * pageSize);
-
-  const data = rows.map((r) => serializeRun(r as RunRow));
-  return c.json(
-    { success: true as const, data, meta: buildPaginationMeta(page, pageSize, total) },
-    200,
-  );
-});
-
-// ─── Generate run ──────────────────────────────────────────────────────────────────
-const generateRunRoute = createRoute({
-  method: "post",
-  path: "/salary/runs",
-  tags: ["Salary"],
-  summary: "Generate a salary run for a period",
-  description:
-    "Permission: salary:create. Computes pay for every worker with APPROVED attendance in the period and settles their advances — all in one transaction. One run per (site, period). Accepts an Idempotency-Key header for safe retries.",
-  middleware: [
-    requireAuth,
-    requireSiteContext,
-    requirePermission("salary", "create"),
-    idempotency(),
-  ] as const,
-  request: {
-    body: { content: { "application/json": { schema: generateRunBodySchema } }, required: true },
-  },
-  responses: {
-    201: {
-      description: "Run generated",
-      content: { "application/json": { schema: apiSuccessSchema(salaryRunDetailSchema) } },
-    },
-    400: {
-      description: "Invalid period",
-      content: { "application/json": { schema: apiErrorSchema } },
-    },
-    403: {
-      description: "Permission denied",
-      content: { "application/json": { schema: apiErrorSchema } },
-    },
-    409: {
-      description: "Conflict (run exists / no approved attendance)",
-      content: { "application/json": { schema: apiErrorSchema } },
-    },
-  },
-});
-
-salaryRoutes.openapi(generateRunRoute, async (c) => {
-  const { periodStart, periodEnd } = c.req.valid("json");
-  const auth = c.get("auth");
-  const db = getDb(c);
-  const meta = getRequestMeta(c);
-  const siteId = auth.siteId as string;
-
-  if (periodStart > periodEnd) {
-    throw new ValidationError("The start date must be on or before the end date.", {
-      fields: { periodStart: "Must be on or before the end date." },
-    });
-  }
-
-  // Idempotency guard: one live run per (site, period).
-  const [dupe] = await db
-    .select({ id: salaryRuns.id })
-    .from(salaryRuns)
-    .where(
-      and(
-        eq(salaryRuns.siteId, siteId),
-        eq(salaryRuns.periodStart, periodStart),
-        eq(salaryRuns.periodEnd, periodEnd),
-        isNull(salaryRuns.deletedAt),
-      ),
-    )
-    .limit(1);
-  if (dupe) {
-    throw new ConflictError(
-      "A salary run already exists for this period. Delete it first to regenerate.",
-    );
-  }
-
-  // Pull approved attendance in the period and group by worker.
-  const rows = await db
+  // Attendance in the month (all marked records count — approval is not required here).
+  const attRows = await db
     .select({
       workerId: attendance.workerId,
       status: attendance.status,
@@ -265,222 +121,297 @@ salaryRoutes.openapi(generateRunRoute, async (c) => {
     .where(
       and(
         eq(attendance.siteId, siteId),
-        eq(attendance.approved, true),
         isNull(attendance.deletedAt),
-        gte(attendance.attendanceDate, periodStart),
-        lte(attendance.attendanceDate, periodEnd),
+        gte(attendance.attendanceDate, monthStart),
+        lte(attendance.attendanceDate, monthEnd),
       ),
     );
+  const att = new Map<string, { present: number; half: number; ot: number }>();
+  for (const r of attRows) {
+    const a = att.get(r.workerId) ?? { present: 0, half: 0, ot: 0 };
+    if (r.status === "present") a.present += 1;
+    else if (r.status === "half_day") a.half += 1;
+    a.ot += Number(r.overtimeHours);
+    att.set(r.workerId, a);
+  }
 
-  if (rows.length === 0) {
-    throw new ConflictError(
-      "No approved attendance in this period. Approve attendance before generating salary.",
+  // Advances dated within the month, summed per worker.
+  const advRows = await db
+    .select({ workerId: workerAdvances.workerId, amount: workerAdvances.amount })
+    .from(workerAdvances)
+    .where(
+      and(
+        eq(workerAdvances.siteId, siteId),
+        isNull(workerAdvances.deletedAt),
+        gte(workerAdvances.advanceDate, monthStart),
+        lte(workerAdvances.advanceDate, monthEnd),
+      ),
     );
+  const advByWorker = new Map<string, number>();
+  for (const r of advRows) {
+    advByWorker.set(r.workerId, (advByWorker.get(r.workerId) ?? 0) + Number(r.amount));
   }
 
-  interface Agg {
-    presentDays: number;
-    halfDays: number;
-    overtimeHours: number;
+  // Payments applied to the month, summed per worker.
+  const payRows = await db
+    .select({ workerId: salaryPayments.workerId, amount: salaryPayments.amount })
+    .from(salaryPayments)
+    .where(
+      and(
+        eq(salaryPayments.siteId, siteId),
+        isNull(salaryPayments.deletedAt),
+        eq(salaryPayments.periodMonth, month),
+      ),
+    );
+  const paidByWorker = new Map<string, number>();
+  for (const r of payRows) {
+    paidByWorker.set(r.workerId, (paidByWorker.get(r.workerId) ?? 0) + Number(r.amount));
   }
-  const byWorker = new Map<string, Agg>();
-  for (const r of rows) {
-    const agg = byWorker.get(r.workerId) ?? { presentDays: 0, halfDays: 0, overtimeHours: 0 };
-    if (r.status === "present") agg.presentDays += 1;
-    else if (r.status === "half_day") agg.halfDays += 1;
-    agg.overtimeHours += Number(r.overtimeHours);
-    byWorker.set(r.workerId, agg);
-  }
 
-  const workerIds = [...byWorker.keys()];
-  const workerRows = await db
-    .select()
-    .from(workers)
-    .where(and(eq(workers.siteId, siteId), inArray(workers.id, workerIds)));
-  const workerById = new Map(workerRows.map((w) => [w.id, w]));
+  const totals = { workers: 0, gross: 0, advances: 0, netPayable: 0, paid: 0, balance: 0 };
+  const rows = workerRows.map((w) => {
+    const a = att.get(w.id) ?? { present: 0, half: 0, ot: 0 };
+    const dailyWage = Number(w.dailyWage);
+    const overtimeRate = w.overtimeRate != null ? Number(w.overtimeRate) : null;
+    const payableDays = a.present + 0.5 * a.half;
+    const gross = round2(payableDays * dailyWage + a.ot * (overtimeRate ?? 0));
+    const advances = round2(advByWorker.get(w.id) ?? 0);
+    const netPayable = round2(gross - advances);
+    const paid = round2(paidByWorker.get(w.id) ?? 0);
+    const balance = round2(netPayable - paid);
 
-  const result = await db.transaction(async (tx) => {
-    const [run] = await tx
-      .insert(salaryRuns)
-      .values({ siteId, periodStart, periodEnd, generatedByUserId: auth.userId })
-      .returning();
-    if (!run) throw new ConflictError("Could not generate the salary run. Please try again.");
+    totals.workers += 1;
+    totals.gross += gross;
+    totals.advances += advances;
+    totals.netPayable += netPayable;
+    totals.paid += paid;
+    totals.balance += balance;
 
-    let totalGross = 0;
-    let totalAdvances = 0;
-    let totalNet = 0;
-    let totalWorkers = 0;
-
-    for (const workerId of workerIds) {
-      const worker = workerById.get(workerId);
-      if (!worker) continue; // FK guarantees presence; defensive.
-      const agg = byWorker.get(workerId) as Agg;
-
-      const dailyWage = Number(worker.dailyWage);
-      const overtimeRate = worker.overtimeRate != null ? Number(worker.overtimeRate) : 0;
-      const payableDays = agg.presentDays + 0.5 * agg.halfDays;
-      const gross = round2(payableDays * dailyWage + agg.overtimeHours * overtimeRate);
-
-      // Settle every unsettled advance dated on/before the period end.
-      const advances = await tx
-        .select({ id: workerAdvances.id, amount: workerAdvances.amount })
-        .from(workerAdvances)
-        .where(
-          and(
-            eq(workerAdvances.siteId, siteId),
-            eq(workerAdvances.workerId, workerId),
-            isNull(workerAdvances.settledInRunId),
-            isNull(workerAdvances.deletedAt),
-            lte(workerAdvances.advanceDate, periodEnd),
-          ),
-        );
-      const advanceDeducted = round2(advances.reduce((s, a) => s + Number(a.amount), 0));
-      const netPayable = round2(gross - advanceDeducted);
-
-      await tx.insert(salaryRunItems).values({
-        siteId,
-        runId: run.id,
-        workerId,
-        workerName: worker.name,
-        presentDays: agg.presentDays,
-        halfDays: agg.halfDays,
-        payableDays: String(payableDays),
-        overtimeHours: String(round2(agg.overtimeHours)),
-        dailyWage: String(dailyWage),
-        overtimeRate: worker.overtimeRate ?? null,
-        gross: String(gross),
-        advanceDeducted: String(advanceDeducted),
-        netPayable: String(netPayable),
-        paymentStatus: netPayable <= 0 ? "paid" : "unpaid",
-      });
-
-      if (advances.length > 0) {
-        await tx
-          .update(workerAdvances)
-          .set({ settledInRunId: run.id })
-          .where(
-            inArray(
-              workerAdvances.id,
-              advances.map((a) => a.id),
-            ),
-          );
-      }
-
-      totalGross += gross;
-      totalAdvances += advanceDeducted;
-      totalNet += netPayable;
-      totalWorkers += 1;
-    }
-
-    await tx
-      .update(salaryRuns)
-      .set({
-        totalWorkers,
-        totalGross: String(round2(totalGross)),
-        totalAdvances: String(round2(totalAdvances)),
-        totalNet: String(round2(totalNet)),
-      })
-      .where(eq(salaryRuns.id, run.id));
-
-    await writeAudit(tx, {
-      siteId,
-      actorUserId: auth.userId,
-      module: "salary",
-      action: "create",
-      entityType: "salary_run",
-      entityId: run.id,
-      // No amounts in the audit trail (sensitive salary data — see docs/architecter.md).
-      after: { periodStart, periodEnd, totalWorkers },
-      ip: meta.ip,
-      userAgent: meta.userAgent,
-      requestId: meta.requestId,
-    });
-
-    return run.id;
+    return {
+      workerId: w.id,
+      workerName: w.name,
+      category: w.category ?? w.trade ?? null,
+      dailyWage,
+      overtimeRate,
+      presentDays: a.present,
+      halfDays: a.half,
+      payableDays,
+      overtimeHours: round2(a.ot),
+      gross,
+      advances,
+      netPayable,
+      paid,
+      balance,
+      paymentStatus: derivePaymentStatus(netPayable, paid),
+    };
   });
 
-  const run = await loadRunRow(db, siteId, result);
-  if (!run) throw new NotFoundError("Salary run not found.");
-  const items = await db
-    .select()
-    .from(salaryRunItems)
-    .where(eq(salaryRunItems.runId, result))
-    .orderBy(asc(salaryRunItems.workerName));
-
   return c.json(
     {
       success: true as const,
       data: {
-        ...serializeRun(run as RunRow),
-        items: items.map((i) => serializeItem(i as ItemRow)),
-      },
-    },
-    201,
-  );
-});
-
-// ─── Get run detail ────────────────────────────────────────────────────────────────
-const getRunRoute = createRoute({
-  method: "get",
-  path: "/salary/runs/{id}",
-  tags: ["Salary"],
-  summary: "Get a salary run with its payslips",
-  description: "Permission: salary:view.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("salary", "view")] as const,
-  request: { params: runIdParamSchema },
-  responses: {
-    200: {
-      description: "The salary run",
-      content: { "application/json": { schema: apiSuccessSchema(salaryRunDetailSchema) } },
-    },
-    403: {
-      description: "Permission denied",
-      content: { "application/json": { schema: apiErrorSchema } },
-    },
-    404: { description: "Not found", content: { "application/json": { schema: apiErrorSchema } } },
-  },
-});
-
-salaryRoutes.openapi(getRunRoute, async (c) => {
-  const { id } = c.req.valid("param");
-  const auth = c.get("auth");
-  const db = getDb(c);
-  const siteId = auth.siteId as string;
-
-  const run = await loadRunRow(db, siteId, id);
-  if (!run) throw new NotFoundError("Salary run not found.");
-  const items = await db
-    .select()
-    .from(salaryRunItems)
-    .where(eq(salaryRunItems.runId, id))
-    .orderBy(asc(salaryRunItems.workerName));
-
-  return c.json(
-    {
-      success: true as const,
-      data: {
-        ...serializeRun(run as RunRow),
-        items: items.map((i) => serializeItem(i as ItemRow)),
+        month,
+        totals: {
+          workers: totals.workers,
+          gross: round2(totals.gross),
+          advances: round2(totals.advances),
+          netPayable: round2(totals.netPayable),
+          paid: round2(totals.paid),
+          balance: round2(totals.balance),
+        },
+        workers: rows,
       },
     },
     200,
   );
 });
 
-// ─── Delete (discard) run ───────────────────────────────────────────────────────────
-const deleteRunRoute = createRoute({
-  method: "delete",
-  path: "/salary/runs/{id}",
+// ─── Advances ──────────────────────────────────────────────────────────────────
+interface AdvanceRow {
+  id: string;
+  siteId: string;
+  workerId: string;
+  workerName: string | null;
+  amount: string;
+  advanceDate: string;
+  note: string | null;
+  createdById: string;
+  createdByName: string | null;
+  createdAt: Date;
+}
+
+const advanceColumns = {
+  id: workerAdvances.id,
+  siteId: workerAdvances.siteId,
+  workerId: workerAdvances.workerId,
+  workerName: workers.name,
+  amount: workerAdvances.amount,
+  advanceDate: workerAdvances.advanceDate,
+  note: workerAdvances.note,
+  createdById: workerAdvances.createdByUserId,
+  createdByName: advCreator.name,
+  createdAt: workerAdvances.createdAt,
+};
+
+function serializeAdvance(row: AdvanceRow) {
+  return {
+    id: row.id,
+    siteId: row.siteId,
+    workerId: row.workerId,
+    workerName: row.workerName ?? null,
+    amount: Number(row.amount),
+    advanceDate: row.advanceDate,
+    note: row.note,
+    createdBy: row.createdById ? { id: row.createdById, name: row.createdByName ?? "—" } : null,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+const listAdvancesRoute = createRoute({
+  method: "get",
+  path: "/salary/advances",
   tags: ["Salary"],
-  summary: "Discard a salary run",
-  description:
-    "Permission: salary:delete. Returns its settled advances to the unsettled pool so the period can be regenerated.",
-  middleware: [requireAuth, requireSiteContext, requirePermission("salary", "delete")] as const,
-  request: { params: runIdParamSchema },
+  summary: "List worker advances",
+  description: "Permission: salary:view. Filter by worker and/or month (YYYY-MM).",
+  middleware: [requireAuth, requireSiteContext, requirePermission("salary", "view")] as const,
+  request: { query: listAdvancesQuerySchema },
   responses: {
     200: {
-      description: "Discarded",
-      content: { "application/json": { schema: apiSuccessSchema(deleteRunResultSchema) } },
+      description: "Advances",
+      content: { "application/json": { schema: apiSuccessSchema(z.array(advanceSchema)) } },
+    },
+    403: {
+      description: "Permission denied",
+      content: { "application/json": { schema: apiErrorSchema } },
+    },
+  },
+});
+
+salaryRoutes.openapi(listAdvancesRoute, async (c) => {
+  const { workerId, month } = c.req.valid("query");
+  const auth = c.get("auth");
+  const db = getDb(c);
+  const siteId = auth.siteId as string;
+
+  const filters = [eq(workerAdvances.siteId, siteId), isNull(workerAdvances.deletedAt)];
+  if (workerId) filters.push(eq(workerAdvances.workerId, workerId));
+  if (month) {
+    const { monthStart, monthEnd } = monthBounds(month);
+    filters.push(gte(workerAdvances.advanceDate, monthStart));
+    filters.push(lte(workerAdvances.advanceDate, monthEnd));
+  }
+
+  const rows = await db
+    .select(advanceColumns)
+    .from(workerAdvances)
+    .innerJoin(workers, eq(workers.id, workerAdvances.workerId))
+    .leftJoin(advCreator, eq(advCreator.id, workerAdvances.createdByUserId))
+    .where(and(...filters))
+    .orderBy(desc(workerAdvances.advanceDate), desc(workerAdvances.createdAt));
+
+  return c.json(
+    { success: true as const, data: rows.map((r) => serializeAdvance(r as AdvanceRow)) },
+    200,
+  );
+});
+
+const createAdvanceRoute = createRoute({
+  method: "post",
+  path: "/salary/advances",
+  tags: ["Salary"],
+  summary: "Give a worker an advance",
+  description:
+    "Permission: salary:create. The advance is deducted from the worker's net pay for the month it is dated in. Accepts an Idempotency-Key header for safe retries.",
+  middleware: [
+    requireAuth,
+    requireSiteContext,
+    requirePermission("salary", "create"),
+    idempotency(),
+  ] as const,
+  request: {
+    body: { content: { "application/json": { schema: createAdvanceBodySchema } }, required: true },
+  },
+  responses: {
+    201: {
+      description: "Created",
+      content: { "application/json": { schema: apiSuccessSchema(advanceSchema) } },
+    },
+    403: {
+      description: "Permission denied",
+      content: { "application/json": { schema: apiErrorSchema } },
+    },
+    404: {
+      description: "Worker not found",
+      content: { "application/json": { schema: apiErrorSchema } },
+    },
+  },
+});
+
+salaryRoutes.openapi(createAdvanceRoute, async (c) => {
+  const body = c.req.valid("json");
+  const auth = c.get("auth");
+  const db = getDb(c);
+  const meta = getRequestMeta(c);
+  const siteId = auth.siteId as string;
+
+  const worker = await loadWorker(db, siteId, body.workerId);
+  if (!worker) throw new NotFoundError("Worker not found.");
+
+  const created = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(workerAdvances)
+      .values({
+        siteId,
+        workerId: body.workerId,
+        amount: String(round2(body.amount)),
+        advanceDate: body.advanceDate ?? today(),
+        note: body.note ?? null,
+        createdByUserId: auth.userId,
+      })
+      .returning();
+    if (!row) throw new ConflictError("Could not record the advance. Please try again.");
+    await writeAudit(tx, {
+      siteId,
+      actorUserId: auth.userId,
+      module: "salary",
+      action: "create",
+      entityType: "worker_advance",
+      entityId: row.id,
+      // No amount in the audit trail (sensitive payment data — see docs/architecter.md).
+      after: { workerId: body.workerId, advanceDate: row.advanceDate },
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+      requestId: meta.requestId,
+    });
+    return row;
+  });
+
+  return c.json(
+    {
+      success: true as const,
+      data: serializeAdvance({
+        ...(created as unknown as AdvanceRow),
+        workerName: worker.name,
+        createdById: auth.userId,
+        createdByName: auth.name,
+      }),
+    },
+    201,
+  );
+});
+
+const deleteAdvanceRoute = createRoute({
+  method: "delete",
+  path: "/salary/advances/{id}",
+  tags: ["Salary"],
+  summary: "Delete an advance",
+  description: "Permission: salary:delete.",
+  middleware: [requireAuth, requireSiteContext, requirePermission("salary", "delete")] as const,
+  request: { params: salaryIdParamSchema },
+  responses: {
+    200: {
+      description: "Deleted",
+      content: { "application/json": { schema: apiSuccessSchema(deleteResultSchema) } },
     },
     403: {
       description: "Permission denied",
@@ -490,31 +421,36 @@ const deleteRunRoute = createRoute({
   },
 });
 
-salaryRoutes.openapi(deleteRunRoute, async (c) => {
+salaryRoutes.openapi(deleteAdvanceRoute, async (c) => {
   const { id } = c.req.valid("param");
   const auth = c.get("auth");
   const db = getDb(c);
   const meta = getRequestMeta(c);
   const siteId = auth.siteId as string;
 
-  const run = await loadRunRow(db, siteId, id);
-  if (!run) throw new NotFoundError("Salary run not found.");
+  const [existing] = await db
+    .select()
+    .from(workerAdvances)
+    .where(
+      and(
+        eq(workerAdvances.id, id),
+        eq(workerAdvances.siteId, siteId),
+        isNull(workerAdvances.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!existing) throw new NotFoundError("Advance not found.");
 
   await db.transaction(async (tx) => {
-    // Release this run's advances back to the unsettled pool.
-    await tx
-      .update(workerAdvances)
-      .set({ settledInRunId: null })
-      .where(and(eq(workerAdvances.siteId, siteId), eq(workerAdvances.settledInRunId, id)));
-    await tx.update(salaryRuns).set({ deletedAt: new Date() }).where(eq(salaryRuns.id, id));
+    await tx.update(workerAdvances).set({ deletedAt: new Date() }).where(eq(workerAdvances.id, id));
     await writeAudit(tx, {
       siteId,
       actorUserId: auth.userId,
       module: "salary",
       action: "delete",
-      entityType: "salary_run",
+      entityType: "worker_advance",
       entityId: id,
-      after: { periodStart: run.periodStart, periodEnd: run.periodEnd },
+      after: { workerId: existing.workerId },
       ip: meta.ip,
       userAgent: meta.userAgent,
       requestId: meta.requestId,
@@ -524,14 +460,104 @@ salaryRoutes.openapi(deleteRunRoute, async (c) => {
   return c.json({ success: true as const, data: { id, deleted: true } }, 200);
 });
 
-// ─── Record payment for a payslip ──────────────────────────────────────────────────
-const payItemRoute = createRoute({
-  method: "post",
-  path: "/salary/runs/{id}/items/{itemId}/pay",
+// ─── Payments ────────────────────────────────────────────────────────────────────
+interface PaymentRow {
+  id: string;
+  siteId: string;
+  workerId: string;
+  workerName: string | null;
+  periodMonth: string;
+  amount: string;
+  paidDate: string;
+  paymentMode: string | null;
+  note: string | null;
+  createdById: string;
+  createdByName: string | null;
+  createdAt: Date;
+}
+
+const paymentColumns = {
+  id: salaryPayments.id,
+  siteId: salaryPayments.siteId,
+  workerId: salaryPayments.workerId,
+  workerName: workers.name,
+  periodMonth: salaryPayments.periodMonth,
+  amount: salaryPayments.amount,
+  paidDate: salaryPayments.paidDate,
+  paymentMode: salaryPayments.paymentMode,
+  note: salaryPayments.note,
+  createdById: salaryPayments.createdByUserId,
+  createdByName: payCreator.name,
+  createdAt: salaryPayments.createdAt,
+};
+
+function serializePayment(row: PaymentRow) {
+  return {
+    id: row.id,
+    siteId: row.siteId,
+    workerId: row.workerId,
+    workerName: row.workerName ?? null,
+    periodMonth: row.periodMonth,
+    amount: Number(row.amount),
+    paidDate: row.paidDate,
+    paymentMode: row.paymentMode,
+    note: row.note,
+    createdBy: row.createdById ? { id: row.createdById, name: row.createdByName ?? "—" } : null,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+const listPaymentsRoute = createRoute({
+  method: "get",
+  path: "/salary/payments",
   tags: ["Salary"],
-  summary: "Record payment against a payslip",
+  summary: "List salary payments",
+  description: "Permission: salary:view. Filter by worker and/or month (YYYY-MM).",
+  middleware: [requireAuth, requireSiteContext, requirePermission("salary", "view")] as const,
+  request: { query: listPaymentsQuerySchema },
+  responses: {
+    200: {
+      description: "Payments",
+      content: { "application/json": { schema: apiSuccessSchema(z.array(paymentSchema)) } },
+    },
+    403: {
+      description: "Permission denied",
+      content: { "application/json": { schema: apiErrorSchema } },
+    },
+  },
+});
+
+salaryRoutes.openapi(listPaymentsRoute, async (c) => {
+  const { workerId, month } = c.req.valid("query");
+  const auth = c.get("auth");
+  const db = getDb(c);
+  const siteId = auth.siteId as string;
+
+  const filters = [eq(salaryPayments.siteId, siteId), isNull(salaryPayments.deletedAt)];
+  if (workerId) filters.push(eq(salaryPayments.workerId, workerId));
+  if (month) filters.push(eq(salaryPayments.periodMonth, month));
+
+  const rows = await db
+    .select(paymentColumns)
+    .from(salaryPayments)
+    .innerJoin(workers, eq(workers.id, salaryPayments.workerId))
+    .leftJoin(payCreator, eq(payCreator.id, salaryPayments.createdByUserId))
+    .where(and(...filters))
+    .orderBy(desc(salaryPayments.paidDate), desc(salaryPayments.createdAt));
+
+  return c.json(
+    { success: true as const, data: rows.map((r) => serializePayment(r as PaymentRow)) },
+    200,
+  );
+});
+
+const createPaymentRoute = createRoute({
+  method: "post",
+  path: "/salary/payments",
+  tags: ["Salary"],
+  summary: "Record a salary payment to a worker",
   description:
-    "Permission: salary:update. Sets the cumulative amount paid; status becomes paid/partial/unpaid accordingly. Accepts an Idempotency-Key header for safe retries.",
+    "Permission: salary:update. Records an amount paid to the worker against a month's net salary. Accepts an Idempotency-Key header for safe retries.",
   middleware: [
     requireAuth,
     requireSiteContext,
@@ -539,17 +565,91 @@ const payItemRoute = createRoute({
     idempotency(),
   ] as const,
   request: {
-    params: runItemParamSchema,
-    body: { content: { "application/json": { schema: payItemBodySchema } }, required: true },
+    body: { content: { "application/json": { schema: createPaymentBodySchema } }, required: true },
   },
   responses: {
-    200: {
-      description: "Payment recorded",
-      content: { "application/json": { schema: apiSuccessSchema(salaryRunItemSchema) } },
+    201: {
+      description: "Recorded",
+      content: { "application/json": { schema: apiSuccessSchema(paymentSchema) } },
     },
-    400: {
-      description: "Amount exceeds net payable",
+    403: {
+      description: "Permission denied",
       content: { "application/json": { schema: apiErrorSchema } },
+    },
+    404: {
+      description: "Worker not found",
+      content: { "application/json": { schema: apiErrorSchema } },
+    },
+  },
+});
+
+salaryRoutes.openapi(createPaymentRoute, async (c) => {
+  const body = c.req.valid("json");
+  const auth = c.get("auth");
+  const db = getDb(c);
+  const meta = getRequestMeta(c);
+  const siteId = auth.siteId as string;
+
+  const worker = await loadWorker(db, siteId, body.workerId);
+  if (!worker) throw new NotFoundError("Worker not found.");
+
+  const created = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(salaryPayments)
+      .values({
+        siteId,
+        workerId: body.workerId,
+        periodMonth: body.periodMonth,
+        amount: String(round2(body.amount)),
+        paidDate: body.paidDate ?? today(),
+        paymentMode: body.paymentMode ?? null,
+        note: body.note ?? null,
+        createdByUserId: auth.userId,
+      })
+      .returning();
+    if (!row) throw new ConflictError("Could not record the payment. Please try again.");
+    await writeAudit(tx, {
+      siteId,
+      actorUserId: auth.userId,
+      module: "salary",
+      action: "update",
+      entityType: "salary_payment",
+      entityId: row.id,
+      // No amount in the audit trail (sensitive payment data — see docs/architecter.md).
+      after: { workerId: body.workerId, periodMonth: body.periodMonth },
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+      requestId: meta.requestId,
+    });
+    return row;
+  });
+
+  return c.json(
+    {
+      success: true as const,
+      data: serializePayment({
+        ...(created as unknown as PaymentRow),
+        workerName: worker.name,
+        createdById: auth.userId,
+        createdByName: auth.name,
+      }),
+    },
+    201,
+  );
+});
+
+const deletePaymentRoute = createRoute({
+  method: "delete",
+  path: "/salary/payments/{id}",
+  tags: ["Salary"],
+  summary: "Delete a salary payment",
+  description: "Permission: salary:delete.",
+  middleware: [requireAuth, requireSiteContext, requirePermission("salary", "delete")] as const,
+  request: { params: salaryIdParamSchema },
+  responses: {
+    200: {
+      description: "Deleted",
+      content: { "application/json": { schema: apiSuccessSchema(deleteResultSchema) } },
     },
     403: {
       description: "Permission denied",
@@ -559,75 +659,41 @@ const payItemRoute = createRoute({
   },
 });
 
-salaryRoutes.openapi(payItemRoute, async (c) => {
-  const { id, itemId } = c.req.valid("param");
-  const body = c.req.valid("json");
+salaryRoutes.openapi(deletePaymentRoute, async (c) => {
+  const { id } = c.req.valid("param");
   const auth = c.get("auth");
   const db = getDb(c);
   const meta = getRequestMeta(c);
   const siteId = auth.siteId as string;
 
-  const run = await loadRunRow(db, siteId, id);
-  if (!run) throw new NotFoundError("Salary run not found.");
-
-  const [item] = await db
+  const [existing] = await db
     .select()
-    .from(salaryRunItems)
+    .from(salaryPayments)
     .where(
       and(
-        eq(salaryRunItems.id, itemId),
-        eq(salaryRunItems.runId, id),
-        eq(salaryRunItems.siteId, siteId),
+        eq(salaryPayments.id, id),
+        eq(salaryPayments.siteId, siteId),
+        isNull(salaryPayments.deletedAt),
       ),
     )
     .limit(1);
-  if (!item) throw new NotFoundError("Payslip not found.");
+  if (!existing) throw new NotFoundError("Payment not found.");
 
-  const net = Number(item.netPayable);
-  const effectiveNet = Math.max(net, 0);
-  const amountPaid = round2(body.amountPaid);
-  if (amountPaid > effectiveNet) {
-    throw new ValidationError("The amount paid cannot exceed the net payable.", {
-      fields: { amountPaid: "Cannot exceed the net payable." },
-    });
-  }
-
-  const status: (typeof PAYMENT_STATUSES)[number] =
-    amountPaid <= 0
-      ? effectiveNet <= 0
-        ? "paid"
-        : "unpaid"
-      : amountPaid >= effectiveNet
-        ? "paid"
-        : "partial";
-  const paidAt = status === "unpaid" ? null : new Date(body.paidAt ?? today());
-
-  const updated = await db.transaction(async (tx) => {
-    const [row] = await tx
-      .update(salaryRunItems)
-      .set({
-        amountPaid: String(amountPaid),
-        paymentStatus: status,
-        paymentMode: body.paymentMode ?? null,
-        paidAt,
-      })
-      .where(eq(salaryRunItems.id, itemId))
-      .returning();
+  await db.transaction(async (tx) => {
+    await tx.update(salaryPayments).set({ deletedAt: new Date() }).where(eq(salaryPayments.id, id));
     await writeAudit(tx, {
       siteId,
       actorUserId: auth.userId,
       module: "salary",
-      action: "update",
-      entityType: "salary_run_item",
-      entityId: itemId,
-      // No amounts (sensitive payment data) — record only the status transition.
-      after: { paymentStatus: status, paymentMode: body.paymentMode ?? null },
+      action: "delete",
+      entityType: "salary_payment",
+      entityId: id,
+      after: { workerId: existing.workerId, periodMonth: existing.periodMonth },
       ip: meta.ip,
       userAgent: meta.userAgent,
       requestId: meta.requestId,
     });
-    return row;
   });
 
-  return c.json({ success: true as const, data: serializeItem(updated as ItemRow) }, 200);
+  return c.json({ success: true as const, data: { id, deleted: true } }, 200);
 });

@@ -2,6 +2,57 @@
 
 Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 
+## Post-MVP — Attendance ↔ Salary split + worker categories ✅ (2026-06-13)
+
+Re-split the Attendance and Salary modules with the product owner so **all money
+(salary + advances) lives in Salary**, **Attendance is just workers + the daysheet**, and
+workers get a **per-site category dropdown** (replacing free-text "trade"). Migration `0011`
+(additive — 2 tables, 1 column).
+
+### Decisions made (with the product owner)
+- **Keep the daily daysheet** in Attendance (it feeds salary's day count). Attendance is now
+  two tabs — *Daysheet* + *Workers* — the **Advances tab is gone**.
+- **Salary is a per-worker monthly view** (a month picker → every worker with days, gross,
+  advances, net, paid, balance), **replacing the batch "salary run" screen**. Advances are
+  **given and tracked here**, deducted from the month they're dated in.
+- **Per-site worker categories**: a new `worker_categories` list powers the worker form's
+  category dropdown, with an inline **"+ add category"** that persists to the DB. The old
+  `trade` column is kept as a read fallback for pre-existing workers.
+- **Salary days are counted from all marked attendance in the month** (approval is no longer
+  required for the computed view — the approval gate still exists in the daysheet).
+
+### Delivered
+- **DB** (`packages/db`, migration `0011`): `worker_categories` (per-site, unique name);
+  `workers.category_id` FK (+ index); `salary_payments` (per worker, per `YYYY-MM`, what was
+  actually paid out). The legacy `salary_runs`/`salary_run_items` tables are **retained**
+  (the Reports salary dataset still reads them) but no longer written.
+- **API** — Attendance: `GET/POST /attendance/categories`; worker create/update/list/detail
+  carry `categoryId` + a resolved `category` name; the `/attendance/advances` routes were
+  **removed** (moved to Salary). Salary **rewritten**: `GET /salary/monthly?month=`
+  (computes days/gross/advances/net/paid/balance per worker), `GET/POST/DELETE
+  /salary/advances`, `GET/POST/DELETE /salary/payments` (advance + payment creation are
+  idempotent). The old `/salary/runs*` routes were removed. **RBAC change:** advances now
+  need `salary` permission (were `attendance`).
+- **Web** — Attendance page: Advances tab removed; Workers table shows Category / Mobile /
+  Daily wage / OT. Worker form: category **dropdown + inline add**. Salary page rebuilt as a
+  month picker + per-worker table + totals, with a **worker detail modal** (breakdown +
+  advances/payments history + *Give advance* / *Record payment* in-modal). Deleted the
+  `generate-run`, `run-detail`, `pay-item`, and `advance-form` modals.
+
+### Verification
+- `pnpm typecheck` (5 pkgs), `pnpm build` (web `/salary` + `/attendance` compile; API wrangler
+  dry-run) — **all pass**. Biome clean on the changed files. `pnpm db:generate` → `0011`
+  (additive; reviewed).
+- **Pending owner authorization** (DB-migration gate): apply `0011` to Neon
+  (`pnpm db:migrate`) and smoke-test (add a category → add a worker with it → mark a few days
+  → open Salary for the month → give an advance and a payment → balances update).
+
+### Follow-ups
+- The Reports "salary" export still reads the old `salary_runs` tables, so it will be empty
+  going forward — point it at the new monthly model in a later pass.
+- `worker_advances.settled_in_run_id` is now unused (advances deduct by date); harmless,
+  left in place.
+
 ## Post-MVP — Record detail modals (tap-a-row) ✅ (2026-06-12)
 
 Made data-table rows **open a full record detail modal** on click — the immediate ask
