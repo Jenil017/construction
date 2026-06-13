@@ -10,9 +10,8 @@ import { ImageOff, Loader2 } from "lucide-react";
 import { useState } from "react";
 
 const STATUS_META: Record<DprStatus, { label: string; variant: BadgeProps["variant"] }> = {
-  draft: { label: "Draft", variant: "default" },
   submitted: { label: "Submitted", variant: "brand" },
-  approved: { label: "Approved", variant: "success" },
+  approved: { label: "Locked", variant: "success" },
 };
 
 interface DprDetailModalProps {
@@ -31,14 +30,16 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export function DprDetailModal({ dprId, onClose, onEdit }: DprDetailModalProps) {
-  const { can } = useAuth();
+  const { can, user, activeSite } = useAuth();
   const { data: dpr, isLoading } = useDpr(dprId);
   const approveDpr = useApproveDpr();
   const [error, setError] = useState<string | null>(null);
 
-  const canUpdate = can("dpr", "update");
   const canApprove = can("dpr", "approve");
-  const editable = dpr ? dpr.status !== "approved" : false;
+  const isSiteOwner = activeSite?.role === "owner";
+  const isMine = !!dpr && dpr.createdBy?.id === user?.id;
+  // The uploader (or site owner) can edit until the report is locked.
+  const editable = !!dpr && dpr.status !== "approved" && (isSiteOwner || isMine);
 
   const onApprove = async () => {
     if (!dpr) return;
@@ -46,11 +47,11 @@ export function DprDetailModal({ dprId, onClose, onEdit }: DprDetailModalProps) 
     try {
       await approveDpr.mutateAsync(dpr.id);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not approve the report.");
+      setError(e instanceof ApiError ? e.message : "Could not lock the report.");
     }
   };
 
-  const meta = dpr ? STATUS_META[dpr.status] : null;
+  const meta = dpr ? (STATUS_META[dpr.status] ?? STATUS_META.submitted) : null;
 
   return (
     <Modal
@@ -63,14 +64,14 @@ export function DprDetailModal({ dprId, onClose, onEdit }: DprDetailModalProps) 
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
-          {dpr && canUpdate && editable ? (
+          {dpr && editable ? (
             <Button variant="outline" onClick={() => onEdit(dpr)}>
               Edit
             </Button>
           ) : null}
           {dpr && canApprove && dpr.status !== "approved" ? (
             <Button onClick={onApprove} disabled={approveDpr.isPending}>
-              {approveDpr.isPending ? "Approving…" : "Approve"}
+              {approveDpr.isPending ? "Locking…" : "Lock"}
             </Button>
           ) : null}
         </>
@@ -89,7 +90,7 @@ export function DprDetailModal({ dprId, onClose, onEdit }: DprDetailModalProps) 
             ) : null}
             {dpr.approvedBy ? (
               <span className="text-xs text-muted-foreground">
-                · approved by {dpr.approvedBy.name}
+                · locked by {dpr.approvedBy.name}
               </span>
             ) : null}
           </div>

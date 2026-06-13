@@ -32,7 +32,8 @@ export const REPORT_TYPES: ReportTypeDef[] = [
     label: "DPR log",
     module: "dpr",
     dateRange: true,
-    description: "Daily progress reports over a date range.",
+    description:
+      "Daily progress reports over a date range. PDF lays out one report per page with its site photos; CSV is the plain table.",
   },
   {
     key: "inventory_stock",

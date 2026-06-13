@@ -2,6 +2,137 @@
 
 Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 
+## 🔜 Next session — Bill / Invoice generation (planned)
+
+Build bill / invoice generation, supporting **two variants**:
+- **With GST** — a tax invoice: seller + buyer GSTIN, per-line taxable value, CGST/SGST
+  (intra-state) or IGST (inter-state) with tax %, and the grand total in words.
+- **Without GST** — a plain bill / cash memo: line items + total, no tax breakup.
+
+Likely scope to define at session start: an invoice-number series (per site), the source
+(start with **sales**, possibly purchases later), buyer/seller details, line items + totals,
+and a **printable/downloadable PDF**. Open questions for the owner: numbering format, whether
+invoices attach to existing sale records or are standalone, and the default GST rate(s).
+
+## Post-MVP — PWA (installable app, install prompt on login) ✅ (2026-06-13)
+
+Made the web app an installable **PWA**. The custom **install banner shows only on the login
+screen** and is fully responsive. No backend/DB changes.
+
+### Decisions made (with the product owner)
+- **Install prompt lives on the login screen only.** A global, render-nothing `PwaProvider`
+  captures `beforeinstallprompt` early (anywhere) and registers the service worker; the actual
+  banner (`InstallPrompt`) is rendered solely by `app/login/page.tsx`, so it never appears
+  elsewhere.
+- **iOS gets manual steps.** iOS Safari has no `beforeinstallprompt`, so the banner detects
+  iOS/iPadOS and shows "tap Share → Add to Home Screen" instead of an install button.
+- **Service worker registers in production only** — a caching SW under `next dev` fights HMR, so
+  PWA install requires a production build (`build` + `start`). The SW is deliberately conservative
+  (cache-first only for content-hashed `/_next/static/**` + icons; everything else, incl. the
+  cross-origin API, goes straight to the network — no stale HTML/data).
+- **Dismissal is per session** (`sessionStorage`), and the banner auto-hides when already
+  installed (`display-mode: standalone` / iOS `navigator.standalone`).
+
+### Delivered
+- **Icons** (`apps/web/public/`): `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`,
+  `apple-touch-icon.png` — navy (`#101b2e`) field + saffron (`#e0922f`) rounded square with "CE",
+  matching the login badge.
+- **Manifest**: `app/manifest.ts` → `/manifest.webmanifest` (name, `start_url: /login`,
+  `display: standalone`, brand `theme_color`/`background_color`, any + maskable icons). Next
+  auto-links it; `theme-color`, `mobile-web-app-capable`, apple-web-app + icon tags verified in
+  the rendered head.
+- **Service worker**: `public/sw.js` (skipWaiting/clientsClaim, cache-first static, network
+  passthrough otherwise).
+- **Client wiring**: `lib/pwa/install-store.ts` (external store for the deferred event +
+  `isIOS`/`isStandalone`), `components/pwa/pwa-provider.tsx` (mounted in `providers.tsx`),
+  `components/pwa/install-prompt.tsx` (responsive bottom card: phone = full-width sheet, ≥sm =
+  centered max-w-md, safe-area aware). Root layout gained `viewport.themeColor` + `metadata`
+  (apple-web-app, icons).
+
+### Verification
+- `pnpm typecheck` (5 pkgs) ✅, `pnpm --filter web build` ✅ (new `/manifest.webmanifest` route),
+  Biome clean ✅. Confirmed the head includes `<link rel="manifest">`, `theme-color`,
+  `mobile-web-app-capable`, and the icon/apple tags.
+- **Not run here**: a real install. Smoke-test on a deployed (HTTPS) build — Chrome/Android shows
+  the banner on /login and installs; iOS Safari shows the Share steps; an installed launch opens
+  standalone with the navy splash.
+
+## Post-MVP — DPR PDF export with embedded site photos ✅ (2026-06-13)
+
+The `dpr_log` **PDF** export now renders **one report per page** with its details *and* the
+uploaded **site photos embedded straight from R2**, so a reviewer sees the actual site condition
+instead of just a table row. CSV and every other report are unchanged (still the generic table
+renderer). No DB migration.
+
+### Decisions made
+- **Photo PDF is a dedicated path**, branched in `generate()` only for `dpr_log` + `pdf`. The
+  generic `ReportDataset`/table renderer can't carry images, so this avoids polluting that
+  abstraction. `dpr_log` CSV still uses the table dataset.
+- **Images are fetched server-side** via a new `getObject(cfg, key)` R2 helper (the bytes flow
+  through the Worker in the queue consumer, like `putObject` already does for the output file).
+- **Only JPEG/PNG embed** (pdf-lib limitation) — detected by magic bytes, not the stored content
+  type. WEBP/HEIC/HEIF cells show a "preview not supported" note; a missing/failed fetch shows
+  "image unavailable". The job never fails over one bad image.
+- **Flagged caps** (no silent truncation): `DPR_PDF_MAX_REPORTS = 200` (subtitle notes "showing
+  first 200"), `DPR_PDF_MAX_PHOTOS = 12` per report (notes "+N more photo(s) not shown").
+
+### Delivered
+- **API**: new `getObject` in `common/r2`; reusable `toAscii`/`fit` + new `wrapText` exported
+  from `reports.render.ts`; new `reports.dpr-pdf.ts` (`renderDprPdf` — loads DPRs in range + their
+  photos, A4-portrait page-per-report layout: title + LOCKED/SUBMITTED pill, meta line, wrapped
+  detail fields, a 2-column photo grid, footer page numbers). `reports.service.ts` `generate()`
+  branches to it for `dpr_log` PDF and stores `rowCount = report count`. `dpr_log` report
+  description updated.
+
+### Verification
+- `pnpm typecheck` (5 pkgs) ✅, `pnpm build` (web + API wrangler dry-run — bundle 2012 KiB) ✅,
+  Biome clean on changed files ✅.
+- **Not run here** (needs the queue consumer + R2 + DB): actual PDF generation. Smoke-test after
+  deploy — export `dpr_log` as PDF for a date range with photos and confirm images render
+  page-by-page; try a range with a WEBP/HEIC photo to confirm the graceful note.
+
+## Post-MVP — DPR: no draft stage + uploader-edit-until-lock + own-history ✅ (2026-06-13)
+
+Removed the DPR **draft** stage and reshaped the workflow around the product owner's model: a
+site manager **submits** a report (instantly visible — no hidden draft), can **keep editing it
+(data + photos) until the site owner locks it**, and after lock it's **read-only**. Members now
+see **only their own** reports; the owner sees all. Migration `0012`.
+
+### Decisions made (with the product owner)
+- **No draft.** Creation is always `submitted`. The "Save as draft/submitted" toggle is gone;
+  `DPR_STATUSES` is now `["submitted", "approved"]`.
+- **"Lock" instead of "Approve" (UI only).** The owner's lock action keeps the backend
+  `dpr:approve` permission + `approved` status value, but the button reads **Lock** and the
+  badge reads **Locked** (RBAC action names are a fixed set, so they were left unchanged).
+- **Uploader edits after submit, until locked.** Edit / photo add+remove / delete are
+  restricted to the report's **creator or the site owner**, and only while `status !==
+  approved`. Locked reports are immutable for everyone.
+- **Own-history visibility.** A member's DPR list (and the dashboard panel) shows **only the
+  reports they created**; the site owner sees all. Get-by-id is guarded the same way.
+
+### Delivered
+- **DB** (`packages/db`, migration `0012`): `dpr.status` default `draft → submitted`; the
+  migration also **backfills existing `draft` rows to `submitted`**. `demo-seed` no longer emits
+  draft rows.
+- **API** (`apps/api/src/modules/dpr`): `status` removed from create/update bodies (server
+  always sets `submitted`); new `assertCanModify(auth, row)` guard (creator-or-owner + unlocked)
+  applied to update, delete, and photo upload-url/confirm/delete; list scoped to
+  `createdByUserId` for non-owners; get-by-id returns 404 to non-owners for others' reports;
+  approve route relabeled "Lock" in Swagger; user-facing messages say "locked".
+- **Web**: DPR form drops the draft/submitted toggle. **List: Status column removed** — rows
+  show an **Edit** action for the uploader/owner (when unlocked) and a muted **Locked**
+  indicator otherwise (mobile cards match). Detail modal: **Edit** gated by ownership+lock,
+  **Approve → Lock**, "approved by" → "locked by", badge **Approved → Locked**. Dashboard
+  recent-DPR panel + status filter relabeled to **Locked**.
+
+### Verification
+- `pnpm typecheck` (5 pkgs) ✅, `pnpm build` (web `/dpr` compiles; API wrangler dry-run) ✅,
+  Biome clean on the changed files ✅. `pnpm db:generate` → `0012` (default change; the data
+  backfill `UPDATE` was appended to the migration manually).
+- **Pending (DB-migration gate):** apply `0012` to Neon (`pnpm db:migrate`); smoke-test (member
+  creates a DPR → sees only their own → edits data + photos → owner locks → member can no longer
+  edit/delete; a member can't open another member's report by id).
+
 ## Post-MVP — Attendance ↔ Salary split + worker categories ✅ (2026-06-13)
 
 Re-split the Attendance and Salary modules with the product owner so **all money

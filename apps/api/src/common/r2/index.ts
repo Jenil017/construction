@@ -116,3 +116,19 @@ export async function putObject(
 export async function deleteObject(cfg: R2Config, key: string): Promise<void> {
   await client(cfg).fetch(objectUrl(cfg, key), { method: "DELETE" });
 }
+
+/**
+ * Fetch an object's bytes server-side (S3 GET). Returns null if the object is
+ * missing or the read fails, so callers can degrade gracefully — e.g. skip a
+ * single image when generating a PDF rather than failing the whole job. This is
+ * the other case (besides {@link putObject}) where bytes flow through the Worker.
+ */
+export async function getObject(cfg: R2Config, key: string): Promise<Uint8Array | null> {
+  try {
+    const res = await client(cfg).fetch(objectUrl(cfg, key), { method: "GET" });
+    if (!res.ok) return null;
+    return new Uint8Array(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}

@@ -12,25 +12,18 @@
     "FRONTEND_URL": "http://localhost:3000",
     // R2 (non-secret): account id + bucket. S3 endpoint is derived as
     // https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com. Keys are secrets (below).
+    // PROD: set these to YOUR deploy account's id (`wrangler whoami`) + the bucket
+    // you create there (`wrangler r2 bucket create <name>`).
     "R2_ACCOUNT_ID": "718e3f9a2c031cde8a52fa9cc16b696f",
     "R2_BUCKET": "construction"
-  },
-  // Cloudflare Queues: background report exports (PDF/Excel) — see modules/reports
-  // + queue/consumer. This Worker is both producer (EXPORT_QUEUE) and consumer.
-  // Requires a paid Workers plan in prod (`wrangler queues create construction-erp-exports`);
-  // `wrangler dev` simulates the queue locally. Without the binding the producer
-  // falls back to in-isolate processing (executionCtx.waitUntil), so exports still work.
-  "queues": {
-    "producers": [{ "binding": "EXPORT_QUEUE", "queue": "construction-erp-exports" }],
-    "consumers": [
-      {
-        "queue": "construction-erp-exports",
-        "max_batch_size": 5,
-        "max_batch_timeout": 5,
-        "max_retries": 3
-      }
-    ]
   }
+  // Cloudflare Queues are intentionally NOT configured (Queues needs the Workers
+  // Paid plan). With no EXPORT_QUEUE binding the reports producer falls back to
+  // in-isolate processing via executionCtx.waitUntil — exports still work, just
+  // inline rather than on a background consumer. To enable Queues later, restore
+  // the producer/consumer bindings and run
+  // `wrangler queues create construction-erp-exports`.
+  //
   // Secrets (set via `wrangler secret put` in prod, `.dev.vars` locally):
   //   DATABASE_URL, JWT_SECRET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
   // Files use R2 presigned URLs (no proxy through the Worker) — see common/r2.

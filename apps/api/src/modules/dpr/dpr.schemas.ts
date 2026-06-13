@@ -1,7 +1,7 @@
 import { paginationQuerySchema } from "@construction-erp/shared";
 import { z } from "@hono/zod-openapi";
 
-export const DPR_STATUSES = ["draft", "submitted", "approved"] as const;
+export const DPR_STATUSES = ["submitted", "approved"] as const;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Images only, up to 10 MB (mobile camera photos). */
@@ -88,12 +88,12 @@ const baseDprFields = {
   remarks: z.string().max(5000).nullable().optional(),
 };
 
+// Reports are submitted on creation; approval is a separate, permission-gated
+// action, so the client never sets `status` directly.
 export const createDprBodySchema = z
   .object({
     reportDate: z.string().regex(DATE_RE),
     ...baseDprFields,
-    // Approval is a separate action; creation can only draft or submit.
-    status: z.enum(["draft", "submitted"]).optional(),
   })
   .openapi("CreateDprRequest");
 
@@ -101,7 +101,6 @@ export const updateDprBodySchema = z
   .object({
     reportDate: z.string().regex(DATE_RE).optional(),
     ...baseDprFields,
-    status: z.enum(["draft", "submitted"]).optional(),
   })
   .openapi("UpdateDprRequest");
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -106,6 +107,8 @@ export default function LoginPage() {
           Accounts are created by your administrator.
         </p>
       </div>
+
+      <InstallPrompt />
     </div>
   );
 }

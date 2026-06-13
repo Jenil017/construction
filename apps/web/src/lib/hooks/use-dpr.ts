@@ -3,7 +3,7 @@
 import { apiFetch } from "@/lib/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-export type DprStatus = "draft" | "submitted" | "approved";
+export type DprStatus = "submitted" | "approved";
 
 export interface Person {
   id: string;
@@ -54,7 +54,6 @@ export interface CreateDprInput {
   quantityValue?: number | null;
   quantityUnit?: string | null;
   remarks?: string | null;
-  status?: "draft" | "submitted";
 }
 
 export type UpdateDprInput = Partial<CreateDprInput>;

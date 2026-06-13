@@ -478,7 +478,8 @@ async function main(): Promise<void> {
         "On schedule.",
         "Extra labour deployed.",
       ]),
-      status: roll < 0.5 ? "approved" : roll < 0.8 ? "submitted" : "draft",
+      // Locked (approved) vs still-open (submitted) — there is no draft stage.
+      status: roll < 0.5 ? "approved" : "submitted",
       approvedByUserId: roll < 0.5 ? ownerId : null,
       approvedAt: roll < 0.5 ? now : null,
       createdByUserId: ownerId,

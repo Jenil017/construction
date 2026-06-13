@@ -60,7 +60,7 @@ export function renderCsv(dataset: ReportDataset): RenderedFile {
  * "Rs" and drop anything outside printable ASCII to a "?" so drawing never throws.
  * Non-Latin text (e.g. Gujarati names) is best exported as CSV (UTF-8).
  */
-function toAscii(text: string): string {
+export function toAscii(text: string): string {
   let out = "";
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 0;
@@ -73,13 +73,53 @@ function toAscii(text: string): string {
 }
 
 /** Truncate text with a trailing ".." so it fits within `maxWidth`. */
-function fit(text: string, font: PDFFont, size: number, maxWidth: number): string {
+export function fit(text: string, font: PDFFont, size: number, maxWidth: number): string {
   if (font.widthOfTextAtSize(text, size) <= maxWidth) return text;
   let t = text;
   while (t.length > 1 && font.widthOfTextAtSize(`${t}..`, size) > maxWidth) {
     t = t.slice(0, -1);
   }
   return `${t}..`;
+}
+
+/**
+ * Word-wrap text to lines that each fit within `maxWidth` (ASCII-folded first).
+ * Honours explicit newlines and hard-breaks any single word longer than the box.
+ */
+export function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+  const lines: string[] = [];
+  for (const paragraph of toAscii(text).split(/\r?\n/)) {
+    if (paragraph.trim() === "") {
+      lines.push("");
+      continue;
+    }
+    let line = "";
+    for (const word of paragraph.split(/\s+/)) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
+        line = candidate;
+        continue;
+      }
+      if (line) lines.push(line);
+      if (font.widthOfTextAtSize(word, size) > maxWidth) {
+        // Single token wider than the box — break it character by character.
+        let chunk = "";
+        for (const ch of word) {
+          if (chunk && font.widthOfTextAtSize(chunk + ch, size) > maxWidth) {
+            lines.push(chunk);
+            chunk = ch;
+          } else {
+            chunk += ch;
+          }
+        }
+        line = chunk;
+      } else {
+        line = word;
+      }
+    }
+    if (line) lines.push(line);
+  }
+  return lines;
 }
 
 const PAGE = { width: 841.89, height: 595.28 }; // A4 landscape

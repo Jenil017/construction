@@ -5,7 +5,13 @@ import { and, asc, count, desc, eq, ilike, inArray, isNull, or } from "drizzle-o
 import { alias } from "drizzle-orm/pg-core";
 import { writeAudit } from "../../common/audit";
 import { type DbClient, getDb } from "../../common/db";
-import { ConflictError, NotFoundError, UploadError, ValidationError } from "../../common/errors";
+import {
+  AuthorizationError,
+  ConflictError,
+  NotFoundError,
+  UploadError,
+  ValidationError,
+} from "../../common/errors";
 import { getRequestMeta } from "../../common/http/request-meta";
 import { requireAuth } from "../../common/middleware/require-auth";
 import { requirePermission } from "../../common/middleware/require-permission";
@@ -165,6 +171,24 @@ async function loadDprRow(db: DbClient, siteId: string, id: string) {
   return row ?? null;
 }
 
+/**
+ * Who may change a report (edit, delete, add/remove photos): only the member
+ * who created it or the site owner, and only while it isn't locked. The site
+ * owner locks a report (via /lock); once locked it's read-only for everyone —
+ * the uploader can no longer fix data or photos.
+ */
+function assertCanModify(
+  auth: { userId: string; isOwner: boolean },
+  row: { createdByUserId: string; status: string },
+) {
+  if (!auth.isOwner && row.createdByUserId !== auth.userId) {
+    throw new AuthorizationError("You can only edit reports you created.");
+  }
+  if (row.status === "approved") {
+    throw new ConflictError("This report is locked and can no longer be edited.");
+  }
+}
+
 function sortColumn(sortBy?: string) {
   switch (sortBy) {
     case "status":
@@ -207,6 +231,8 @@ dprRoutes.openapi(listDprRoute, async (c) => {
   const siteId = auth.siteId as string;
 
   const filters = [eq(dpr.siteId, siteId), isNull(dpr.deletedAt)];
+  // Members only see reports they created; the site owner sees everyone's.
+  if (!auth.isOwner) filters.push(eq(dpr.createdByUserId, auth.userId));
   if (status) filters.push(eq(dpr.status, status));
   if (date) filters.push(eq(dpr.reportDate, date));
   if (search) {
@@ -285,7 +311,7 @@ dprRoutes.openapi(createDprRoute, async (c) => {
         quantityValue: body.quantityValue != null ? String(body.quantityValue) : null,
         quantityUnit: body.quantityUnit ?? null,
         remarks: body.remarks ?? null,
-        status: body.status ?? "draft",
+        status: "submitted",
         createdByUserId: auth.userId,
       })
       .returning();
@@ -338,6 +364,10 @@ dprRoutes.openapi(getDprRoute, async (c) => {
   const db = getDb(c);
   const data = await loadDpr(db, r2ConfigFromEnv(c.env), auth.siteId as string, id);
   if (!data) throw new NotFoundError("DPR not found.");
+  // Members can only open their own reports; don't leak others' by id.
+  if (!auth.isOwner && data.createdBy?.id !== auth.userId) {
+    throw new NotFoundError("DPR not found.");
+  }
   return c.json({ success: true as const, data }, 200);
 });
 
@@ -346,7 +376,8 @@ const updateDprRoute = createRoute({
   path: "/dpr/{id}",
   tags: ["DPR"],
   summary: "Update a report",
-  description: "Permission: dpr:update. Approved reports cannot be edited.",
+  description:
+    "Permission: dpr:update. Only the report's creator or the site owner can edit it, and only while it is unlocked.",
   middleware: [requireAuth, requireSiteContext, requirePermission("dpr", "update")] as const,
   request: {
     params: dprIdParamSchema,
@@ -376,9 +407,7 @@ dprRoutes.openapi(updateDprRoute, async (c) => {
 
   const existing = await loadDprRow(db, siteId, id);
   if (!existing) throw new NotFoundError("DPR not found.");
-  if (existing.status === "approved") {
-    throw new ConflictError("An approved report can't be edited.");
-  }
+  assertCanModify(auth, existing);
 
   const updates: Record<string, unknown> = {};
   if (body.reportDate !== undefined) updates.reportDate = body.reportDate;
@@ -390,7 +419,6 @@ dprRoutes.openapi(updateDprRoute, async (c) => {
     updates.quantityValue = body.quantityValue != null ? String(body.quantityValue) : null;
   if (body.quantityUnit !== undefined) updates.quantityUnit = body.quantityUnit;
   if (body.remarks !== undefined) updates.remarks = body.remarks;
-  if (body.status !== undefined) updates.status = body.status;
 
   await db.transaction(async (tx) => {
     if (Object.keys(updates).length > 0) {
@@ -405,7 +433,7 @@ dprRoutes.openapi(updateDprRoute, async (c) => {
       entityId: id,
       before: { status: existing.status, reportDate: existing.reportDate },
       after: {
-        status: body.status ?? existing.status,
+        status: existing.status,
         reportDate: body.reportDate ?? existing.reportDate,
       },
       ip: meta.ip,
@@ -423,8 +451,9 @@ const approveDprRoute = createRoute({
   method: "post",
   path: "/dpr/{id}/approve",
   tags: ["DPR"],
-  summary: "Approve a report",
-  description: "Permission: dpr:approve. Locks the report from further edits.",
+  summary: "Lock a report",
+  description:
+    "Permission: dpr:approve. Locks the report (status `approved`) so the uploader can no longer edit it.",
   middleware: [requireAuth, requireSiteContext, requirePermission("dpr", "approve")] as const,
   request: { params: dprIdParamSchema },
   responses: {
@@ -450,7 +479,7 @@ dprRoutes.openapi(approveDprRoute, async (c) => {
 
   const existing = await loadDprRow(db, siteId, id);
   if (!existing) throw new NotFoundError("DPR not found.");
-  if (existing.status === "approved") throw new ConflictError("This report is already approved.");
+  if (existing.status === "approved") throw new ConflictError("This report is already locked.");
 
   await db.transaction(async (tx) => {
     await tx
@@ -507,6 +536,7 @@ dprRoutes.openapi(deleteDprRoute, async (c) => {
 
   const existing = await loadDprRow(db, siteId, id);
   if (!existing) throw new NotFoundError("DPR not found.");
+  assertCanModify(auth, existing);
 
   await db.transaction(async (tx) => {
     await tx.update(dpr).set({ deletedAt: new Date() }).where(eq(dpr.id, id));
@@ -567,6 +597,7 @@ dprRoutes.openapi(uploadUrlRoute, async (c) => {
 
   const existing = await loadDprRow(db, siteId, id);
   if (!existing) throw new NotFoundError("DPR not found.");
+  assertCanModify(auth, existing);
 
   const dot = body.fileName.lastIndexOf(".");
   const ext =
@@ -624,6 +655,7 @@ dprRoutes.openapi(confirmPhotoRoute, async (c) => {
 
   const existing = await loadDprRow(db, siteId, id);
   if (!existing) throw new NotFoundError("DPR not found.");
+  assertCanModify(auth, existing);
 
   // The key must be one we issued for this DPR (prevents attaching arbitrary objects).
   if (!body.objectKey.startsWith(`dpr/${siteId}/${id}/`)) {
@@ -708,6 +740,10 @@ dprRoutes.openapi(deletePhotoRoute, async (c) => {
     .where(and(eq(dprPhotos.id, photoId), eq(dprPhotos.dprId, id), eq(dprPhotos.siteId, siteId)))
     .limit(1);
   if (!photo) throw new NotFoundError("Photo not found.");
+
+  const parent = await loadDprRow(db, siteId, id);
+  if (!parent) throw new NotFoundError("DPR not found.");
+  assertCanModify(auth, parent);
 
   await db.delete(dprPhotos).where(eq(dprPhotos.id, photoId));
 

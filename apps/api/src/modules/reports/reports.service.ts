@@ -5,7 +5,8 @@ import { ExportError } from "../../common/errors";
 import { putObject, r2ConfigFromEnv } from "../../common/r2";
 import type { Env } from "../../env";
 import { DATASET_BUILDERS } from "./reports.datasets";
-import { renderDataset } from "./reports.render";
+import { renderDprPdf } from "./reports.dpr-pdf";
+import { type RenderedFile, renderDataset } from "./reports.render";
 import type { ExportFormat, ExportParams } from "./reports.schemas";
 
 /** Max processing attempts before a job is marked permanently failed. */
@@ -17,8 +18,8 @@ export function exportObjectKey(siteId: string, jobId: string, ext: string): str
 
 /** Build the dataset, render it, store it in R2, and mark the job completed. */
 async function generate(db: Database, env: Env["Bindings"], job: ExportJob): Promise<void> {
-  const builder = DATASET_BUILDERS[job.reportType];
-  if (!builder) throw new ExportError("This report type is no longer available.");
+  const cfg = r2ConfigFromEnv(env);
+  if (!cfg) throw new ExportError("File storage isn't configured yet. Please contact your admin.");
 
   const [site] = await db
     .select({ name: sites.name })
@@ -26,17 +27,27 @@ async function generate(db: Database, env: Env["Bindings"], job: ExportJob): Pro
     .where(eq(sites.id, job.siteId))
     .limit(1);
 
+  const siteName = site?.name ?? "Site";
   const params = (job.params ?? {}) as ExportParams;
-  const dataset = await builder({
-    db,
-    siteId: job.siteId,
-    siteName: site?.name ?? "Site",
-    params,
-  });
-  const file = await renderDataset(dataset, job.format as ExportFormat);
+  const format = job.format as ExportFormat;
 
-  const cfg = r2ConfigFromEnv(env);
-  if (!cfg) throw new ExportError("File storage isn't configured yet. Please contact your admin.");
+  let file: RenderedFile;
+  let rowCount: number;
+
+  // The DPR PDF is special: it embeds site photos page-by-page (CSV and every
+  // other report still go through the generic table renderer).
+  if (job.reportType === "dpr_log" && format === "pdf") {
+    const result = await renderDprPdf({ db, cfg, siteId: job.siteId, siteName, params });
+    file = result.file;
+    rowCount = result.reportCount;
+  } else {
+    const builder = DATASET_BUILDERS[job.reportType];
+    if (!builder) throw new ExportError("This report type is no longer available.");
+    const dataset = await builder({ db, siteId: job.siteId, siteName, params });
+    file = await renderDataset(dataset, format);
+    rowCount = dataset.rows.length;
+  }
+
   const key = exportObjectKey(job.siteId, job.id, file.ext);
   await putObject(cfg, key, file.bytes, file.contentType);
 
@@ -46,7 +57,7 @@ async function generate(db: Database, env: Env["Bindings"], job: ExportJob): Pro
       status: "completed",
       objectKey: key,
       fileSize: file.bytes.byteLength,
-      rowCount: dataset.rows.length,
+      rowCount,
       completedAt: new Date(),
       errorMessage: null,
     })

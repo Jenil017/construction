@@ -7,7 +7,8 @@ import { users } from "./users";
  * A Daily Progress Report: one dated record of work on a site (see docs/prd.md
  * "DPR"). Site-scoped — every query filters by `siteId`. Photos live in
  * `dpr_photos` (R2 object keys; bytes are never stored here). Workflow:
- * `draft` → `submitted` → `approved` (approval requires the `dpr:approve` permission).
+ * `submitted` → `approved` — a report is submitted on creation (no draft stage);
+ * approval requires the `dpr:approve` permission.
  */
 export const dpr = pgTable(
   "dpr",
@@ -24,8 +25,8 @@ export const dpr = pgTable(
     quantityValue: numeric("quantity_value", { precision: 14, scale: 2 }),
     quantityUnit: varchar("quantity_unit", { length: 40 }),
     remarks: text("remarks"),
-    // draft | submitted | approved
-    status: varchar("status", { length: 20 }).notNull().default("draft"),
+    // submitted | approved
+    status: varchar("status", { length: 20 }).notNull().default("submitted"),
     createdByUserId: uuid("created_by_user_id")
       .notNull()
       .references(() => users.id),

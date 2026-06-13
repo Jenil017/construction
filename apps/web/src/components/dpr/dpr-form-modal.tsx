@@ -55,7 +55,6 @@ export function DprFormModal({ open, onClose, dpr }: DprFormModalProps) {
   const [quantityValue, setQuantityValue] = useState("");
   const [quantityUnit, setQuantityUnit] = useState("");
   const [remarks, setRemarks] = useState("");
-  const [status, setStatus] = useState<"draft" | "submitted">("draft");
 
   // Photos already saved (edit mode) and ones picked but not yet uploaded.
   const [existing, setExisting] = useState<DprPhoto[]>([]);
@@ -76,7 +75,6 @@ export function DprFormModal({ open, onClose, dpr }: DprFormModalProps) {
     setQuantityValue(dpr?.quantityValue != null ? String(dpr.quantityValue) : "");
     setQuantityUnit(dpr?.quantityUnit ?? "");
     setRemarks(dpr?.remarks ?? "");
-    setStatus(dpr?.status === "submitted" ? "submitted" : "draft");
     setExisting(dpr?.photos ?? []);
     setRemovedIds([]);
     setPending([]);
@@ -133,7 +131,6 @@ export function DprFormModal({ open, onClose, dpr }: DprFormModalProps) {
       quantityValue: qty,
       quantityUnit: quantityUnit.trim() || null,
       remarks: remarks.trim() || null,
-      status,
     };
 
     try {
@@ -393,26 +390,6 @@ export function DprFormModal({ open, onClose, dpr }: DprFormModalProps) {
               <Loader2 className="size-3.5 animate-spin" /> Uploading photos…
             </p>
           ) : null}
-        </div>
-
-        <div className="space-y-1.5">
-          <Label>Save as</Label>
-          <div className="flex gap-2">
-            {(["draft", "submitted"] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStatus(s)}
-                className={`rounded-md border px-3 py-1.5 text-sm capitalize transition-colors ${
-                  status === s
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:bg-accent"
-                }`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
         </div>
 
         {error ? (

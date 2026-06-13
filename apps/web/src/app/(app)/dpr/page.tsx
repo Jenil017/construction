@@ -2,7 +2,6 @@
 
 import { DprDetailModal } from "@/components/dpr/dpr-detail-modal";
 import { DprFormModal } from "@/components/dpr/dpr-form-modal";
-import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FilterDrawer, type FilterValues } from "@/components/ui/filter-drawer";
 import { Input } from "@/components/ui/input";
@@ -18,17 +17,11 @@ import { ApiError } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth/auth-context";
 import { type DprRow, type DprStatus, useDeleteDpr, useDprList } from "@/lib/hooks/use-dpr";
 import { useOpenOnParam } from "@/lib/hooks/use-open-on-param";
-import { Camera, ChevronRight, Loader2, Plus, Search, Trash2 } from "lucide-react";
+import { Camera, ChevronRight, Loader2, Lock, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useState } from "react";
 
-const STATUS_META: Record<DprStatus, { label: string; variant: BadgeProps["variant"] }> = {
-  draft: { label: "Draft", variant: "default" },
-  submitted: { label: "Submitted", variant: "brand" },
-  approved: { label: "Approved", variant: "success" },
-};
-
 export default function DprPage() {
-  const { can } = useAuth();
+  const { can, user, activeSite } = useAuth();
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<FilterValues>({});
   const {
@@ -49,6 +42,10 @@ export default function DprPage() {
 
   const canCreate = can("dpr", "create");
   const canDelete = can("dpr", "delete");
+  const isSiteOwner = activeSite?.role === "owner";
+  // The uploader (or the site owner) can fix a report until it's locked.
+  const canEditDpr = (dpr: DprRow) =>
+    dpr.status !== "approved" && (isSiteOwner || dpr.createdBy?.id === user?.id);
 
   const openCreate = () => {
     setEditing(null);
@@ -68,8 +65,6 @@ export default function DprPage() {
       window.alert(e instanceof ApiError ? e.message : "Could not delete the report.");
     }
   };
-
-  const meta = (s: DprStatus) => STATUS_META[s];
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -107,9 +102,8 @@ export default function DprPage() {
               key: "status",
               label: "Status",
               options: [
-                { value: "draft", label: "Draft" },
-                { value: "submitted", label: "Submitted" },
-                { value: "approved", label: "Approved" },
+                { value: "submitted", label: "Open" },
+                { value: "approved", label: "Locked" },
               ],
             },
             { type: "date", key: "date", label: "Report date" },
@@ -147,7 +141,12 @@ export default function DprPage() {
                     <div className="min-w-0 flex-1 space-y-1">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-medium">{dpr.reportDate}</span>
-                        <Badge variant={meta(dpr.status).variant}>{meta(dpr.status).label}</Badge>
+                        {dpr.status === "approved" ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            <Lock className="size-3" />
+                            Locked
+                          </span>
+                        ) : null}
                       </div>
                       <p className="truncate text-sm text-muted-foreground">
                         {dpr.workCategory ?? "Uncategorized"}
@@ -164,15 +163,27 @@ export default function DprPage() {
                       </span>
                       <span className="truncate">by {dpr.createdBy?.name ?? "—"}</span>
                     </span>
-                    {canDelete ? (
-                      <button
-                        type="button"
-                        onClick={() => onDelete(dpr)}
-                        className="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-danger transition-colors active:bg-danger/10"
-                      >
-                        <Trash2 className="size-4" />
-                        Delete
-                      </button>
+                    {canEditDpr(dpr) ? (
+                      <span className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => openEdit(dpr)}
+                          className="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-primary transition-colors active:bg-primary/10"
+                        >
+                          <Pencil className="size-4" />
+                          Edit
+                        </button>
+                        {canDelete ? (
+                          <button
+                            type="button"
+                            onClick={() => onDelete(dpr)}
+                            className="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-danger transition-colors active:bg-danger/10"
+                          >
+                            <Trash2 className="size-4" />
+                            Delete
+                          </button>
+                        ) : null}
+                      </span>
                     ) : null}
                   </div>
                 </li>
@@ -187,7 +198,6 @@ export default function DprPage() {
                     <TableHead>Date</TableHead>
                     <TableHead className="w-full">Category</TableHead>
                     <TableHead>Location</TableHead>
-                    <TableHead>Status</TableHead>
                     <TableHead>Photos</TableHead>
                     <TableHead>Created by</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -205,9 +215,6 @@ export default function DprPage() {
                         {dpr.workCategory ?? "—"}
                       </TableCell>
                       <TableCell className="text-muted-foreground">{dpr.location ?? "—"}</TableCell>
-                      <TableCell>
-                        <Badge variant={meta(dpr.status).variant}>{meta(dpr.status).label}</Badge>
-                      </TableCell>
                       <TableCell className="text-muted-foreground">
                         {dpr.photoCount > 0 ? dpr.photoCount : "—"}
                       </TableCell>
@@ -215,7 +222,7 @@ export default function DprPage() {
                         {dpr.createdBy?.name ?? "—"}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1">
                           <Button
                             variant="ghost"
                             size="sm"
@@ -226,19 +233,38 @@ export default function DprPage() {
                           >
                             View
                           </Button>
-                          {canDelete ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-danger hover:text-danger"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onDelete(dpr);
-                              }}
-                            >
-                              Delete
-                            </Button>
-                          ) : null}
+                          {canEditDpr(dpr) ? (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEdit(dpr);
+                                }}
+                              >
+                                Edit
+                              </Button>
+                              {canDelete ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-danger hover:text-danger"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onDelete(dpr);
+                                  }}
+                                >
+                                  Delete
+                                </Button>
+                              ) : null}
+                            </>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 text-xs text-muted-foreground">
+                              <Lock className="size-3.5" />
+                              Locked
+                            </span>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>

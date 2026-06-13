@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { type DprStatus, useDprList } from "@/lib/hooks/use-dpr";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Circle, ClipboardList, Clock, Plus } from "lucide-react";
+import { CheckCircle2, ClipboardList, Clock, Plus } from "lucide-react";
 import Link from "next/link";
 
 interface StatusConfig {
@@ -14,9 +14,8 @@ interface StatusConfig {
 }
 
 const STATUS_CONFIG: Record<DprStatus, StatusConfig> = {
-  draft: { variant: "outline", icon: Circle, label: "Draft" },
   submitted: { variant: "warning", icon: Clock, label: "Pending" },
-  approved: { variant: "success", icon: CheckCircle2, label: "Approved" },
+  approved: { variant: "success", icon: CheckCircle2, label: "Locked" },
 };
 
 function formatDprDate(dateStr: string): string {
@@ -69,7 +68,8 @@ export function RecentDprPanel() {
           </div>
         ) : (
           entries.map((dpr) => {
-            const cfg = STATUS_CONFIG[dpr.status];
+            // Fall back gracefully for any unexpected/legacy status (e.g. a pre-migration "draft").
+            const cfg = STATUS_CONFIG[dpr.status] ?? STATUS_CONFIG.submitted;
             const StatusIcon = cfg.icon;
             const displayText =
               dpr.workCategory ?? dpr.completedWork ?? dpr.location ?? "Daily progress report";

@@ -91,7 +91,12 @@ Deliverables:
 
 Note: `site`/`own` scope **enforcement** uses the `site_assignments` data delivered here but is wired into the operational modules from Phase 4 onward (nothing to row-filter until DPR/attendance exist). Migration `0002` applied to Neon on 2026-06-07.
 
-## Phase 4: DPR Module — ✅ Completed (2026-06-07)
+## Phase 4: DPR Module — ✅ Completed (2026-06-07); reshaped 2026-06-13
+
+**Post-MVP reshape (2026-06-13, migration `0012`):** the **draft** stage was removed — reports
+are **submitted** on creation. The uploader (or site owner) can **edit data + photos until the
+owner locks it** (the "approve" action, now labelled **Lock**); locked reports are read-only.
+Members see **only their own** reports; the owner sees all. See `docs/progress.md`.
 
 Goals:
 
@@ -189,7 +194,7 @@ Deliverables:
 - Report job schema ✅ (`export_jobs`, migration `0005`)
 - Queue producers ✅ (`EXPORT_QUEUE` binding + `waitUntil` fallback when unbound)
 - Queue consumers ✅ (`src/queue/consumer.ts`; Worker exports `{ fetch, queue }`)
-- PDF reports ✅ (paginated A4-landscape tables with totals via `pdf-lib`)
+- PDF reports ✅ (paginated A4-landscape tables with totals via `pdf-lib`) — **`dpr_log` PDF reshaped 2026-06-13** to a page-per-report layout with **site photos embedded from R2** (see `docs/progress.md`)
 - Excel exports ✅ (UTF-8 CSV with BOM; 8 report types across all modules)
 - Download links ✅ (short-lived presigned R2 GET with attachment disposition)
 
