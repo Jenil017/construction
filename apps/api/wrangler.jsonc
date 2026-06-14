@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "construction-erp-api",
+  "name": "construction",
   "main": "src/index.ts",
   "compatibility_date": "2024-12-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -8,8 +8,9 @@
     "enabled": true
   },
   "vars": {
-    "ENVIRONMENT": "development",
-    "FRONTEND_URL": "http://localhost:3000",
+    "ENVIRONMENT": "production",
+    // Comma-separated CORS allowlist: production web origin + localhost for dev.
+    "FRONTEND_URL": "https://construction-web-beta.vercel.app,http://localhost:3000",
     // R2 (non-secret): account id + bucket. S3 endpoint is derived as
     // https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com. Keys are secrets (below).
     // PROD: set these to YOUR deploy account's id (`wrangler whoami`) + the bucket

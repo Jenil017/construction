@@ -42,7 +42,17 @@ export function createApp() {
   app.use(
     "*",
     cors({
-      origin: (origin, c) => c.env.FRONTEND_URL ?? "http://localhost:3000",
+      // FRONTEND_URL is a comma-separated allowlist (prod web origin + localhost).
+      // Reflect the request origin when it's allowed; otherwise fall back to the
+      // first configured origin (a non-match the browser will reject).
+      origin: (origin, c) => {
+        const allowed = (c.env.FRONTEND_URL ?? "http://localhost:3000")
+          .split(",")
+          .map((o: string) => o.trim())
+          .filter(Boolean);
+        if (origin && allowed.includes(origin)) return origin;
+        return allowed[0] ?? "http://localhost:3000";
+      },
       credentials: true,
     }),
   );
