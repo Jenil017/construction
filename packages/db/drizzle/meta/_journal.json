@@ -92,6 +92,13 @@
       "when": 1781370457140,
       "tag": "0012_glorious_dakota_north",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1782027106880,
+      "tag": "0013_wandering_khan",
+      "breakpoints": true
     }
   ]
 }

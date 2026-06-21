@@ -18,6 +18,7 @@ export const RBAC_MODULES = [
   "salary",
   "purchases",
   "selling",
+  "invoices",
   "expenses",
   "suppliers",
   "reports",

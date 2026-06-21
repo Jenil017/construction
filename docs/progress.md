@@ -2,17 +2,89 @@
 
 Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 
-## 🔜 Next session — Bill / Invoice generation (planned)
+## Post-MVP — Invoices (GST tax invoice + non-GST bill) ✅ (2026-06-21)
 
-Build bill / invoice generation, supporting **two variants**:
-- **With GST** — a tax invoice: seller + buyer GSTIN, per-line taxable value, CGST/SGST
-  (intra-state) or IGST (inter-state) with tax %, and the grand total in words.
-- **Without GST** — a plain bill / cash memo: line items + total, no tax breakup.
+Customer-facing **billing module** with the two variants the owner asked for, generated as
+downloadable **PDFs** off the existing `pdf-lib` setup. Standalone, site-scoped invoices with
+their own multi-line items (decided: not tied to a single Selling sale). Migration `0013`.
+Preceded by a deep-research pass on Indian GST invoicing law (CGST Rule 46 fields, intra/inter
+tax logic, construction rates, e-invoicing threshold, bill of supply) — see the research notes.
 
-Likely scope to define at session start: an invoice-number series (per site), the source
-(start with **sales**, possibly purchases later), buyer/seller details, line items + totals,
-and a **printable/downloadable PDF**. Open questions for the owner: numbering format, whether
-invoices attach to existing sale records or are standalone, and the default GST rate(s).
+### Decisions made
+- **Two variants, one module.** `invoiceType` = `tax` (GST tax invoice: per-line taxable value
+  + CGST/SGST intra-state **or** IGST inter-state) or `bill` (bill of supply / cash memo — no
+  tax breakup). Both render to A4-portrait PDF.
+- **Intra vs inter is auto-detected** from seller `stateCode` vs buyer `stateCode` (GST state
+  codes; a 37-entry dropdown on the web). Same state → CGST+SGST (split equally, remainder put
+  on SGST so the halves sum exactly); different → IGST at the full rate. Place of supply
+  defaults to the buyer's state.
+- **Numbering** is a per-site, per-type, per-financial-year gapless series — `invoiceSeq`
+  (counter) + formatted `invoiceNumber` `PREFIX/FY/NNNN` (e.g. `VESU/26-27/0002`; bills use a
+  `B` marker → `VESU/26-27/B0001`). Prefix from the site code/name (≤4 chars to stay within the
+  16-char Rule 46 limit). Assigned in the create transaction (`max(seq)+1`) with a unique index
+  on `(site, type, FY, seq)` + a retry on the rare race; cancelled/deleted rows keep their
+  number (never reused).
+- **Seller identity on the site.** Added `gstin` / `legalName` / `stateCode` to `sites`;
+  invoices **snapshot** seller fields at creation (frozen on the issued invoice) and the form
+  lets the user override per-invoice. (Setting them once on the site in a Sites-settings form is
+  a follow-up — today they're entered/edited on the invoice.)
+- **Invoices don't touch inventory** (that's the Selling module). An invoice is a billing
+  document; lines are free-text goods/services (optional `materialId` link kept for future
+  prefill). Totals (taxable, CGST/SGST/IGST, round-off to nearest rupee, grand total) are
+  denormalized on the invoice; **amount in words** (Indian lakh/crore) is generated server-side.
+- **Synchronous PDF** (`GET /invoices/{id}/pdf` → binary, `Content-Disposition: attachment`) —
+  an invoice is one small page, so no queue/R2 needed (distinct from the bulk Reports pipeline).
+  The web downloads it via an authed `fetch` → blob. Reuses the reports renderer's
+  `toAscii`/`fit`/`wrapText` (₹ → "Rs", WinAnsi-safe).
+- **e-Invoicing (IRN/QR) intentionally skipped** — mandatory only above ₹5 cr turnover; out of
+  scope for small contractors. Schema can host it later. Credit/debit notes + GSTR-1 export are
+  the top deferred follow-ups.
+- **Workflow** `issued` → `cancelled` (create is issued + numbered immediately, like Selling);
+  edit replaces header + all line items while not cancelled; soft-deleted; payment tracked
+  (`unpaid`/`partial`/`paid` via cumulative `amountReceived`). New RBAC module `invoices`.
+
+### Delivered
+- **DB** (`packages/db`, migration `0013`): `invoices` (40 cols — type, number/seq/FY, dates,
+  supply type, reverse charge, seller + buyer snapshots, the money totals, payment, status) +
+  `invoice_items` (taxable value, gstRate, CGST/SGST/IGST, line total, sortOrder); seller
+  columns added to `sites`. Unique indexes on `(site, number)` and `(site, type, FY, seq)`.
+- **Shared**: `invoices` added to `RBAC_MODULES`.
+- **API** (`apps/api/src/modules/invoices`): `invoices.service.ts` (the GST computation, FY +
+  number formatting, amount-in-words), `invoices.pdf.ts` (the tax-invoice / bill-of-supply
+  renderer), `invoices.schemas.ts`, `invoices.routes.ts` — `GET /invoices`, `POST /invoices`
+  (idempotent), `GET/PATCH/DELETE /invoices/{id}`, `POST /invoices/{id}/status` (cancel),
+  `POST /invoices/{id}/payment`, `GET /invoices/{id}/pdf`. Mounted in `app.ts` under the
+  **Invoices** Swagger tag. Site-scoped, audited (no amounts in the audit), soft-deleted.
+- **Web** (`apps/web`): `use-invoices` hook (+ a client-side compute mirror for live form
+  totals + a binary PDF download helper); `/invoices` page (cards on mobile / table on desktop,
+  search + type/payment/date filters); form modal (type toggle, GST-state dropdowns, multi-line
+  items with a live CGST/SGST/IGST + grand-total preview, seller section); detail modal (item
+  table, totals, amount-in-words, **Download PDF**, edit/cancel/delete/record-payment); payment
+  modal; **Invoices** nav item.
+
+### Verification
+- `pnpm typecheck` (4 pkgs) ✅, `pnpm build` (web `/invoices` 11.9 kB + API wrangler dry-run,
+  pdf-lib bundled 2067 KiB) ✅, Biome clean on all new files ✅. `pnpm db:generate` → `0013`,
+  **applied to Neon** via `pnpm db:migrate`.
+- **Playwright end-to-end (headless Chromium, live web+API): 23/23 passed** — login → create an
+  intra-state GST invoice (2 lines, CGST 630 + SGST 630, grand ₹8,260) → download a valid PDF →
+  create an inter-state invoice (IGST ₹1,800, grand ₹11,800) → create a non-GST bill (no tax,
+  ₹5,000) → record full payment (→ paid) → edit buyer name (persisted). No API ≥400s, no page
+  errors, no serious console errors.
+- **PDF content verified** (decoded the generated PDFs): correct titles (TAX INVOICE /
+  BILL OF SUPPLY), seller + GSTIN, numbers `VESU/26-27/0001..0003` + `B0001`, intra→CGST/SGST,
+  inter→IGST, "Amount in words: Rupees …", no column truncation (line cells drop the per-cell
+  "Rs " prefix; currency shown in the totals box).
+
+### Follow-ups
+- **Seller details on the Site** — add `gstin`/`legalName`/`stateCode` to the Sites settings
+  form so they default onto invoices without per-invoice entry.
+- **Credit / debit notes** (CGST s.34) for returns/revisions, **GSTR-1 data export** (fits the
+  Reports queue), and **e-invoicing (IRN/QR)** if a tenant crosses ₹5 cr — the top GST gaps.
+- A **"Generate invoice from sale"** shortcut (prefill from a Selling record) and an
+  **Invoices report type** in the export pipeline.
+- GST **rates are entered per line** (no rate master yet) — a HSN→rate reference table with
+  effective-from dates is the clean next step (rates change; never hard-code).
 
 ## Post-MVP — PWA (installable app, install prompt on login) ✅ (2026-06-13)
 

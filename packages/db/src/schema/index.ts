@@ -29,5 +29,7 @@ export * from "./expenses";
 export * from "./purchases";
 export * from "./purchase-items";
 export * from "./site-sales";
+export * from "./invoices";
+export * from "./invoice-items";
 export * from "./export-jobs";
 export * from "./idempotency-keys";

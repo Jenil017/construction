@@ -13,6 +13,7 @@ import { dprRoutes } from "./modules/dpr";
 import { expenseRoutes } from "./modules/expenses";
 import { healthRoutes } from "./modules/health";
 import { inventoryRoutes } from "./modules/inventory";
+import { invoiceRoutes } from "./modules/invoices";
 import { purchaseRoutes } from "./modules/purchases";
 import { reportRoutes } from "./modules/reports";
 import { salaryRoutes } from "./modules/salary";
@@ -74,6 +75,7 @@ export function createApp() {
   app.route("/", expenseRoutes);
   app.route("/", purchaseRoutes);
   app.route("/", sellingRoutes);
+  app.route("/", invoiceRoutes);
   app.route("/", reportRoutes);
 
   // Bearer auth scheme so protected endpoints are marked + testable in Swagger.

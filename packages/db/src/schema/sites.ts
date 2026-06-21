@@ -21,6 +21,14 @@ export const sites = pgTable(
     address: text("address"),
     city: varchar("city", { length: 120 }),
     state: varchar("state", { length: 120 }),
+    // Seller identity for invoicing (the site is the GST-registered business unit
+    // that issues invoices). All optional — set on sites that bill with GST.
+    // `gstin` is the 15-char GSTIN; `legalName` the registered business name
+    // (falls back to `name`); `stateCode` the 2-digit GST state code (e.g. "24"
+    // Gujarat), used to decide intra- vs inter-state tax on an invoice.
+    gstin: varchar("gstin", { length: 15 }),
+    legalName: text("legal_name"),
+    stateCode: varchar("state_code", { length: 2 }),
     // active | inactive | completed
     status: varchar("status", { length: 20 }).notNull().default("active"),
     ...timestamps,
