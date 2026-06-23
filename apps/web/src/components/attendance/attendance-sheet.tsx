@@ -166,7 +166,7 @@ export function AttendanceSheet() {
             max={today()}
             value={date}
             onChange={(e) => setDate(e.target.value)}
-            className="sm:w-48"
+            className="w-full sm:w-48"
           />
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -218,42 +218,44 @@ export function AttendanceSheet() {
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-1.5">
-                    {STATUS_OPTIONS.map((opt) => {
-                      const active = entry.status === opt.value;
-                      return (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          disabled={!canCreate || locked}
-                          onClick={() => setStatus(w.id, opt.value)}
-                          className={`size-9 rounded-md border text-sm font-semibold transition-colors disabled:opacity-50 ${
-                            active ? opt.cls : "bg-card text-muted-foreground hover:bg-accent"
-                          }`}
-                          aria-label={opt.value}
-                        >
-                          {opt.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {showOt ? (
-                    <div className="flex items-center gap-1">
-                      <Input
-                        type="number"
-                        min="0"
-                        step="any"
-                        value={entry.ot}
-                        disabled={!canCreate || locked}
-                        onChange={(e) => setOt(w.id, e.target.value)}
-                        placeholder="OT"
-                        className="w-16"
-                        aria-label="Overtime hours"
-                      />
-                      <span className="text-xs text-muted-foreground">hr</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
+                      {STATUS_OPTIONS.map((opt) => {
+                        const active = entry.status === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            disabled={!canCreate || locked}
+                            onClick={() => setStatus(w.id, opt.value)}
+                            className={`size-11 rounded-md border text-sm font-semibold transition-colors disabled:opacity-50 sm:size-9 ${
+                              active ? opt.cls : "bg-card text-muted-foreground hover:bg-accent"
+                            }`}
+                            aria-label={opt.value}
+                          >
+                            {opt.label}
+                          </button>
+                        );
+                      })}
                     </div>
-                  ) : null}
+
+                    {showOt ? (
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={entry.ot}
+                          disabled={!canCreate || locked}
+                          onChange={(e) => setOt(w.id, e.target.value)}
+                          placeholder="OT"
+                          className="w-16"
+                          aria-label="Overtime hours"
+                        />
+                        <span className="text-xs text-muted-foreground">hr</span>
+                      </div>
+                    ) : null}
+                  </div>
                 </li>
               );
             })}

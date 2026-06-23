@@ -59,7 +59,7 @@ export function DetailRows({ rows }: { rows: DetailRow[] }) {
     <dl className="divide-y divide-border/60 overflow-hidden rounded-lg border">
       {visible.map((r) => (
         <div key={r.label} className="flex items-start justify-between gap-4 px-3.5 py-2.5">
-          <dt className="shrink-0 text-sm text-muted-foreground">{r.label}</dt>
+          <dt className="max-w-[45%] shrink-0 text-sm text-muted-foreground">{r.label}</dt>
           <dd className="min-w-0 break-words text-right text-sm font-medium">{r.value}</dd>
         </div>
       ))}

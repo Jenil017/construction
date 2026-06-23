@@ -65,7 +65,7 @@ export default function SuppliersPage() {
         ) : null}
       </div>
 
-      <div className="relative sm:max-w-xs">
+      <div className="relative w-full sm:max-w-xs">
         <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
         <Input
           value={search}
@@ -90,25 +90,14 @@ export default function SuppliersPage() {
         ) : !suppliers || suppliers.length === 0 ? (
           <div className="py-16 text-center text-sm text-muted-foreground">No suppliers yet.</div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-full">Supplier</TableHead>
-                <TableHead>Contact</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead>GSTIN</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <>
+            {/* Mobile: stacked cards (avoids wide-table overflow). */}
+            <ul className="divide-y md:hidden">
               {suppliers.map((s) => (
-                <TableRow key={s.id}>
-                  <TableCell className="font-medium">{s.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{s.contactPerson ?? "—"}</TableCell>
-                  <TableCell className="text-muted-foreground">{s.phone ?? "—"}</TableCell>
-                  <TableCell className="text-muted-foreground">{s.gstin ?? "—"}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
+                <li key={s.id} className="space-y-1.5 px-4 py-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="min-w-0 flex-1 truncate font-medium">{s.name}</p>
+                    <div className="flex shrink-0 gap-1">
                       {canUpdate ? (
                         <Button
                           variant="ghost"
@@ -132,11 +121,72 @@ export default function SuppliersPage() {
                         </Button>
                       ) : null}
                     </div>
-                  </TableCell>
-                </TableRow>
+                  </div>
+                  {s.contactPerson || s.phone ? (
+                    <p className="truncate text-sm text-muted-foreground">
+                      {[s.contactPerson, s.phone].filter(Boolean).join(" · ")}
+                    </p>
+                  ) : null}
+                  {s.gstin ? (
+                    <p className="truncate text-xs text-muted-foreground">GSTIN {s.gstin}</p>
+                  ) : null}
+                </li>
               ))}
-            </TableBody>
-          </Table>
+            </ul>
+
+            {/* Desktop: full table. */}
+            <div className="hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-full">Supplier</TableHead>
+                    <TableHead>Contact</TableHead>
+                    <TableHead>Phone</TableHead>
+                    <TableHead>GSTIN</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {suppliers.map((s) => (
+                    <TableRow key={s.id}>
+                      <TableCell className="font-medium">{s.name}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {s.contactPerson ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{s.phone ?? "—"}</TableCell>
+                      <TableCell className="text-muted-foreground">{s.gstin ?? "—"}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          {canUpdate ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setEditing(s);
+                                setFormOpen(true);
+                              }}
+                            >
+                              Edit
+                            </Button>
+                          ) : null}
+                          {canDelete ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-danger hover:text-danger"
+                              onClick={() => onDelete(s)}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
       </div>
 

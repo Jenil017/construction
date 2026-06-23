@@ -73,8 +73,7 @@ export function FilterDrawer({ fields, values, onChange, className }: FilterDraw
     setOpen(false);
   };
 
-  const setField = (key: string, value: string) =>
-    setDraft((prev) => ({ ...prev, [key]: value }));
+  const setField = (key: string, value: string) => setDraft((prev) => ({ ...prev, [key]: value }));
 
   const trigger = (
     <button
@@ -110,10 +109,11 @@ export function FilterDrawer({ fields, values, onChange, className }: FilterDraw
             className="absolute inset-0 cursor-default bg-[#0b1220]/30 backdrop-blur-[2px]"
             onClick={() => setOpen(false)}
           />
-          {/* Drawer */}
+          {/* Drawer — cap so a dismissible backdrop strip always remains, even
+              on a 320px viewport where max-w-xs (20rem) would fill the screen. */}
           <div
             ref={drawerRef}
-            className="relative z-10 flex h-full w-full max-w-xs flex-col bg-card shadow-xl border-l border-border/70"
+            className="relative z-10 flex h-full w-[min(20rem,calc(100vw-3rem))] flex-col bg-card shadow-xl border-l border-border/70"
           >
             {/* Header */}
             <div className="flex items-center justify-between border-b border-border/70 px-5 py-4">
@@ -121,10 +121,10 @@ export function FilterDrawer({ fields, values, onChange, className }: FilterDraw
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent"
+                className="-mr-2 flex size-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent"
                 aria-label="Close"
               >
-                <X className="size-4" />
+                <X className="size-5" />
               </button>
             </div>
 

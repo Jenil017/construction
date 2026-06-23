@@ -66,10 +66,10 @@ export default function SitesPage() {
   const location = (site: SiteRow) => [site.city, site.state].filter(Boolean).join(", ") || "—";
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Sites</h1>
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Sites</h1>
           <p className="text-sm text-muted-foreground">
             Create and manage your sites. Switch the active site from the top bar to work in one.
           </p>
@@ -82,8 +82,8 @@ export default function SitesPage() {
         ) : null}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 sm:max-w-xs">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="relative w-full flex-1 sm:max-w-xs">
           <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
           <Input
             value={search}
@@ -95,7 +95,7 @@ export default function SitesPage() {
         <Select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as "all" | SiteStatus)}
-          className="w-auto"
+          className="w-full sm:w-auto"
         >
           <option value="all">All statuses</option>
           <option value="active">Active</option>
@@ -104,7 +104,7 @@ export default function SitesPage() {
         </Select>
       </div>
 
-      <div className="rounded-xl border bg-card">
+      <div className="overflow-hidden rounded-xl border bg-card">
         {isLoading ? (
           <div className="flex items-center justify-center py-16 text-muted-foreground">
             <Loader2 className="size-5 animate-spin" />
@@ -119,39 +119,35 @@ export default function SitesPage() {
         ) : !sites || sites.length === 0 ? (
           <div className="py-16 text-center text-sm text-muted-foreground">No sites found.</div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-full">Name</TableHead>
-                <TableHead>Location</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Members</TableHead>
-                {canManage ? <TableHead className="text-right">Actions</TableHead> : null}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <>
+            {/* Mobile: stacked cards (avoids wide-table overflow). */}
+            <ul className="divide-y md:hidden">
               {sites.map((site) => {
                 const meta = STATUS_META[site.status];
                 return (
-                  <TableRow key={site.id}>
-                    <TableCell className="font-medium">
-                      {site.name}
-                      {site.code ? (
-                        <span className="ml-1 text-xs text-muted-foreground">({site.code})</span>
-                      ) : null}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{location(site)}</TableCell>
-                    <TableCell>
+                  <li key={site.id} className="space-y-2 px-4 py-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">
+                          {site.name}
+                          {site.code ? (
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              ({site.code})
+                            </span>
+                          ) : null}
+                        </p>
+                        <p className="truncate text-sm text-muted-foreground">{location(site)}</p>
+                      </div>
                       <Badge variant={meta.variant}>{meta.label}</Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {site.memberCount > 0
-                        ? `${site.memberCount} member${site.memberCount > 1 ? "s" : ""}`
-                        : "—"}
-                    </TableCell>
-                    {canManage ? (
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm text-muted-foreground">
+                        {site.memberCount > 0
+                          ? `${site.memberCount} member${site.memberCount > 1 ? "s" : ""}`
+                          : "No members"}
+                      </span>
+                      {canManage ? (
+                        <div className="flex gap-1">
                           <Button variant="ghost" size="sm" onClick={() => openEdit(site)}>
                             Edit
                           </Button>
@@ -164,13 +160,71 @@ export default function SitesPage() {
                             Delete
                           </Button>
                         </div>
-                      </TableCell>
-                    ) : null}
-                  </TableRow>
+                      ) : null}
+                    </div>
+                  </li>
                 );
               })}
-            </TableBody>
-          </Table>
+            </ul>
+
+            {/* Desktop: full table. */}
+            <div className="hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-full">Name</TableHead>
+                    <TableHead>Location</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Members</TableHead>
+                    {canManage ? <TableHead className="text-right">Actions</TableHead> : null}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sites.map((site) => {
+                    const meta = STATUS_META[site.status];
+                    return (
+                      <TableRow key={site.id}>
+                        <TableCell className="font-medium">
+                          {site.name}
+                          {site.code ? (
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              ({site.code})
+                            </span>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">{location(site)}</TableCell>
+                        <TableCell>
+                          <Badge variant={meta.variant}>{meta.label}</Badge>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {site.memberCount > 0
+                            ? `${site.memberCount} member${site.memberCount > 1 ? "s" : ""}`
+                            : "—"}
+                        </TableCell>
+                        {canManage ? (
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-1">
+                              <Button variant="ghost" size="sm" onClick={() => openEdit(site)}>
+                                Edit
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-danger hover:text-danger"
+                                onClick={() => onDelete(site)}
+                              >
+                                Delete
+                              </Button>
+                            </div>
+                          </TableCell>
+                        ) : null}
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
       </div>
 

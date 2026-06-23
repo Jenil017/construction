@@ -292,7 +292,7 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
               </div>
 
               {/* Qty / Unit / Rate */}
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 <Input
                   type="number"
                   min="0"
@@ -369,7 +369,7 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
                 value={taxAmount}
                 onChange={(e) => setTaxAmount(e.target.value)}
                 placeholder="0"
-                className="ml-auto w-32 text-right"
+                className="ml-auto w-24 text-right sm:w-32"
               />
             </div>
             <div className="flex justify-between font-semibold">

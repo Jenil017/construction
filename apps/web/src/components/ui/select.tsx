@@ -17,7 +17,7 @@ function Select({ className, children, style, ...props }: React.ComponentProps<"
         ...style,
       }}
       className={cn(
-        "flex h-10 w-full cursor-pointer appearance-none rounded-md border border-input bg-card px-3 py-1 pr-9 text-sm shadow-xs transition-[color,box-shadow,border-color] outline-none hover:border-foreground/25 focus-visible:border-accent-solid focus-visible:ring-2 focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50",
+        "flex h-11 w-full cursor-pointer appearance-none rounded-md border border-input bg-card px-3 py-1 pr-9 text-sm shadow-xs transition-[color,box-shadow,border-color] outline-none hover:border-foreground/25 focus-visible:border-accent-solid focus-visible:ring-2 focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50 sm:h-10",
         className,
       )}
       {...props}

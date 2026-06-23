@@ -49,27 +49,34 @@ export function StatCard({
   const inner = (
     <Card
       className={cn(
-        "group relative h-full overflow-hidden p-5 transition-all duration-200",
+        "group relative h-full overflow-hidden p-4 transition-all duration-200 sm:p-5",
         href && "hover:-translate-y-0.5 hover:shadow-md",
       )}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-2 sm:gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-muted-foreground">{label}</p>
+          {/* Wrap to two lines rather than truncating — on a 2-up mobile grid the
+              card is too narrow for labels like "Pending Payments" on one line. */}
+          <p className="text-sm font-medium leading-snug text-muted-foreground">{label}</p>
           <p
             className={cn(
-              "nums mt-2 truncate text-2xl font-semibold tracking-tight sm:text-[1.7rem]",
+              "nums mt-2 truncate text-lg font-semibold tracking-tight min-[400px]:text-xl sm:text-2xl",
               emphasize ? t.value : "text-foreground",
             )}
           >
             {loading ? <span className="text-muted-foreground/40">—</span> : value}
           </p>
-          {hint ? <p className="mt-1 truncate text-xs text-muted-foreground">{hint}</p> : null}
+          {hint ? <p className="mt-1 text-xs leading-snug text-muted-foreground">{hint}</p> : null}
         </div>
+        {/* Decorative icon chip — hidden on the narrowest screens so the label
+            keeps full width; shown from xs (≈400px) up. */}
         <span
-          className={cn("flex size-10 shrink-0 items-center justify-center rounded-xl", t.chip)}
+          className={cn(
+            "hidden size-9 shrink-0 items-center justify-center rounded-xl min-[400px]:flex sm:size-10",
+            t.chip,
+          )}
         >
-          <Icon className="size-5" />
+          <Icon className="size-4 sm:size-5" />
         </span>
       </div>
       {href ? (

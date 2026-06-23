@@ -203,73 +203,130 @@ export default function ReportsPage() {
         ) : !jobs || jobs.length === 0 ? (
           <div className="py-16 text-center text-sm text-muted-foreground">No exports yet.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-full">Report</TableHead>
-                  <TableHead>Format</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Rows</TableHead>
-                  <TableHead className="text-right">Size</TableHead>
-                  <TableHead>Requested</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {jobs.map((job) => (
-                  <TableRow key={job.id}>
-                    <TableCell className="font-medium">{job.reportLabel}</TableCell>
-                    <TableCell className="uppercase text-muted-foreground">{job.format}</TableCell>
-                    <TableCell>
-                      <Badge variant={STATUS_VARIANT[job.status]}>{job.status}</Badge>
-                      {job.status === "failed" && job.errorMessage ? (
-                        <p className="mt-1 max-w-[16rem] text-xs text-danger">{job.errorMessage}</p>
+          <>
+            {/* Mobile: stacked cards (the 7-column table is too wide for phones). */}
+            <ul className="divide-y md:hidden">
+              {jobs.map((job) => (
+                <li key={job.id} className="space-y-2 px-4 py-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="min-w-0 flex-1 font-medium">{job.reportLabel}</p>
+                    <Badge variant={STATUS_VARIANT[job.status]}>{job.status}</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    <span className="uppercase">{job.format}</span>
+                    {job.rowCount != null ? ` · ${job.rowCount} rows` : ""}
+                    {` · ${formatSize(job.fileSize)}`}
+                    {` · ${new Date(job.createdAt).toLocaleString()}`}
+                  </p>
+                  {job.status === "failed" && job.errorMessage ? (
+                    <p className="break-words text-xs text-danger">{job.errorMessage}</p>
+                  ) : null}
+                  {job.status === "completed" || canDelete ? (
+                    <div className="flex justify-end gap-1">
+                      {job.status === "completed" ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onDownload(job)}
+                          disabled={downloadingId === job.id}
+                        >
+                          {downloadingId === job.id ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <Download className="size-4" />
+                          )}
+                          Download
+                        </Button>
                       ) : null}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {job.rowCount ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {formatSize(job.fileSize)}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {new Date(job.createdAt).toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        {job.status === "completed" ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => onDownload(job)}
-                            disabled={downloadingId === job.id}
-                          >
-                            {downloadingId === job.id ? (
-                              <Loader2 className="size-4 animate-spin" />
-                            ) : (
-                              <Download className="size-4" />
-                            )}
-                            Download
-                          </Button>
-                        ) : null}
-                        {canDelete ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-danger hover:text-danger"
-                            onClick={() => onDelete(job)}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
-                        ) : null}
-                      </div>
-                    </TableCell>
+                      {canDelete ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-danger hover:text-danger"
+                          onClick={() => onDelete(job)}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+
+            {/* Desktop: full table. */}
+            <div className="hidden overflow-x-auto md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-full">Report</TableHead>
+                    <TableHead>Format</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Rows</TableHead>
+                    <TableHead className="text-right">Size</TableHead>
+                    <TableHead>Requested</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+                </TableHeader>
+                <TableBody>
+                  {jobs.map((job) => (
+                    <TableRow key={job.id}>
+                      <TableCell className="font-medium">{job.reportLabel}</TableCell>
+                      <TableCell className="uppercase text-muted-foreground">
+                        {job.format}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={STATUS_VARIANT[job.status]}>{job.status}</Badge>
+                        {job.status === "failed" && job.errorMessage ? (
+                          <p className="mt-1 max-w-[16rem] break-words text-xs text-danger">
+                            {job.errorMessage}
+                          </p>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        {job.rowCount ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        {formatSize(job.fileSize)}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {new Date(job.createdAt).toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          {job.status === "completed" ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => onDownload(job)}
+                              disabled={downloadingId === job.id}
+                            >
+                              {downloadingId === job.id ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <Download className="size-4" />
+                              )}
+                              Download
+                            </Button>
+                          ) : null}
+                          {canDelete ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-danger hover:text-danger"
+                              onClick={() => onDelete(job)}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
       </div>
     </div>

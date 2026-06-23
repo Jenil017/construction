@@ -18,10 +18,12 @@ const buttonVariants = cva(
         link: "text-accent-foreground underline-offset-4 hover:underline",
       },
       size: {
-        default: "h-10 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
+        // Mobile-first: 44px tall for comfortable touch, stepping down to the
+        // denser desktop size at sm+ where pointer precision is higher.
+        default: "h-11 px-4 py-2 sm:h-10",
+        sm: "h-9 rounded-md px-3 text-xs sm:h-8",
         lg: "h-11 rounded-lg px-6 text-[15px]",
-        icon: "size-10",
+        icon: "size-11 sm:size-10",
       },
     },
     defaultVariants: {

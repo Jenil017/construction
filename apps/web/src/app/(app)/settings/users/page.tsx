@@ -57,11 +57,18 @@ export default function UsersPage() {
     }
   };
 
+  const accessSummary = (user: UserRow) => {
+    const total = user.permissions.length;
+    if (total === 0) return "No access";
+    const write = user.permissions.filter((p) => p.level === "read_write").length;
+    return `${total} module${total > 1 ? "s" : ""}${write > 0 ? ` · ${write} write` : ""}`;
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Members</h1>
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Members</h1>
           <p className="text-sm text-muted-foreground">
             People with access to {activeSite ? activeSite.name : "this site"} and what they can do.
           </p>
@@ -74,8 +81,8 @@ export default function UsersPage() {
         ) : null}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 sm:max-w-xs">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="relative w-full flex-1 sm:max-w-xs">
           <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
           <Input
             value={search}
@@ -84,13 +91,13 @@ export default function UsersPage() {
             className="pl-8"
           />
         </div>
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {(["all", "active", "disabled"] as const).map((s) => (
             <button
               key={s}
               type="button"
               onClick={() => setStatusFilter(s)}
-              className={`rounded-md border px-3 py-1.5 text-sm capitalize transition-colors ${
+              className={`rounded-md border px-3 py-2 text-sm capitalize transition-colors ${
                 statusFilter === s
                   ? "border-primary bg-primary/10 text-primary"
                   : "text-muted-foreground hover:bg-accent"
@@ -102,7 +109,7 @@ export default function UsersPage() {
         </div>
       </div>
 
-      <div className="rounded-xl border bg-card">
+      <div className="overflow-hidden rounded-xl border bg-card">
         {isLoading ? (
           <div className="flex items-center justify-center py-16 text-muted-foreground">
             <Loader2 className="size-5 animate-spin" />
@@ -117,41 +124,24 @@ export default function UsersPage() {
         ) : !users || users.length === 0 ? (
           <div className="py-16 text-center text-sm text-muted-foreground">No users found.</div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead className="w-full">Email</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Access</TableHead>
-                {canUpdate || canDelete ? (
-                  <TableHead className="text-right">Actions</TableHead>
-                ) : null}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <>
+            {/* Mobile: stacked cards (avoids wide-table overflow on long emails). */}
+            <ul className="divide-y md:hidden">
               {users.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell className="font-medium">{user.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{user.email}</TableCell>
-                  <TableCell>
+                <li key={user.id} className="space-y-1.5 px-4 py-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{user.name}</p>
+                      <p className="truncate text-sm text-muted-foreground">{user.email}</p>
+                    </div>
                     <Badge variant={user.status === "active" ? "success" : "danger"}>
                       {user.status}
                     </Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {(() => {
-                      const total = user.permissions.length;
-                      if (total === 0) return "No access";
-                      const write = user.permissions.filter((p) => p.level === "read_write").length;
-                      return `${total} module${total > 1 ? "s" : ""}${
-                        write > 0 ? ` · ${write} write` : ""
-                      }`;
-                    })()}
-                  </TableCell>
-                  {canUpdate || canDelete ? (
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">{accessSummary(user)}</span>
+                    {canUpdate || canDelete ? (
+                      <div className="flex gap-1">
                         {canUpdate ? (
                           <Button variant="ghost" size="sm" onClick={() => openEdit(user)}>
                             Edit
@@ -168,12 +158,64 @@ export default function UsersPage() {
                           </Button>
                         ) : null}
                       </div>
-                    </TableCell>
-                  ) : null}
-                </TableRow>
+                    ) : null}
+                  </div>
+                </li>
               ))}
-            </TableBody>
-          </Table>
+            </ul>
+
+            {/* Desktop: full table. */}
+            <div className="hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead className="w-full">Email</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Access</TableHead>
+                    {canUpdate || canDelete ? (
+                      <TableHead className="text-right">Actions</TableHead>
+                    ) : null}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {users.map((user) => (
+                    <TableRow key={user.id}>
+                      <TableCell className="font-medium">{user.name}</TableCell>
+                      <TableCell className="text-muted-foreground">{user.email}</TableCell>
+                      <TableCell>
+                        <Badge variant={user.status === "active" ? "success" : "danger"}>
+                          {user.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{accessSummary(user)}</TableCell>
+                      {canUpdate || canDelete ? (
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            {canUpdate ? (
+                              <Button variant="ghost" size="sm" onClick={() => openEdit(user)}>
+                                Edit
+                              </Button>
+                            ) : null}
+                            {canDelete ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-danger hover:text-danger"
+                                onClick={() => onDelete(user)}
+                              >
+                                Delete
+                              </Button>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                      ) : null}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
       </div>
 

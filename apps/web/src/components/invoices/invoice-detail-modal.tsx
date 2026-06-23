@@ -13,6 +13,7 @@ import {
   useCancelInvoice,
   useDeleteInvoice,
 } from "@/lib/hooks/use-invoices";
+import { cn } from "@/lib/utils";
 import { Download, Loader2 } from "lucide-react";
 import { useState } from "react";
 
@@ -116,7 +117,7 @@ export function InvoiceDetailModal({
 
         {/* Line items */}
         <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full text-sm">
+          <table className={cn("w-full text-sm", isTax ? "min-w-[34rem]" : "min-w-[28rem]")}>
             <thead className="bg-muted/40 text-xs text-muted-foreground">
               <tr>
                 <th className="px-2.5 py-2 text-left font-medium">Description</th>

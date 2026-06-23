@@ -14,7 +14,7 @@ export function PendingPaymentsCard() {
   return (
     <StatCard
       label="Pending Payments"
-      value={`₹${outstanding.toLocaleString("en-IN")}`}
+      value={`₹${Math.round(outstanding).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
       icon={Wallet}
       href="/purchases"
       tone={outstanding > 0 ? "amber" : "navy"}

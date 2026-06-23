@@ -2,6 +2,56 @@
 
 Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 
+## Post-MVP — Responsive design pass (mobile 320px → desktop) ✅ (2026-06-23)
+
+App-wide responsive audit + fixes after the owner reported "many responsiveness issues."
+Ran the `responsive-design` skill, fanned out a 3-agent audit (pages / form-detail modals /
+dashboard widgets + shared UI), then fixed the concrete findings. No new deps; pure Tailwind.
+
+### Fixes delivered
+- **Touch targets (WCAG 44px) — shared primitives.** `Button` (`default` → `h-11 sm:h-10`,
+  `sm` → `h-9 sm:h-8`, `icon` → `size-11 sm:size-10`), `Input`/`Select`/`Combobox` trigger
+  (`h-11 sm:h-10`). Mobile-first: comfortable on touch, denser on `sm+` for pointer precision.
+  Also attendance P/½/A buttons (`size-9` → `size-11 sm:size-9`), attendance tabs, users
+  status filter, site-switcher/user-menu rows, DPR mobile Edit/Delete (`min-h-9` → `min-h-11`),
+  filter-drawer close button (28px → 40px `size-10`).
+- **Dashboard cards (the reported symptom).** `StatCard` label was `truncate` next to a fixed
+  icon chip, so on the 2-up mobile grid labels cut to "Present T…" / "Pendi…" and hints to
+  "No attendan…". Fix: label/hint now **wrap to two lines** (`leading-snug`, no truncate) and
+  the **decorative icon chip is hidden below ~400px** (`min-[400px]:flex`), giving the label
+  full card width. Value keeps `truncate` (ellipsis a long ₹ figure, never wrap mid-number) and
+  steps `text-xl sm:text-2xl`. Week-trend cards (`expense`/`attendance`) got `truncate` +
+  `text-xl sm:text-[1.65rem]` on the headline figure.
+- **Responsive padding.** `Card` header/content + `StatCard`/week-cards → `p-4 sm:p-6` (`p-5`
+  was eating ~48px of a 320px width).
+- **Mobile card views for wide tables** (the `md:hidden` cards + `hidden md:block` table
+  pattern, matching inventory/expenses): **Sites, Suppliers, Members (users), Reports, and the
+  Attendance→Workers tab** previously rendered raw multi-column tables on phones.
+- **Modal line-item editors.** Purchase Qty/Unit/Rate `grid-cols-3` → `grid-cols-2 sm:grid-cols-3`;
+  purchase tax input `w-32` → `w-24 sm:w-32`; invoice line grid `grid-cols-2 sm:grid-cols-N`
+  → `…sm:grid-cols-3 lg:grid-cols-N`; invoice/purchase detail item tables got `min-w`/`nowrap`
+  so they scroll cleanly instead of crushing; user-form permission buttons → full-width 3-col
+  grid on mobile (`grid grid-cols-3 … sm:flex`).
+- **Combobox dropdown** now clamps to the viewport (right-edge gutter + flips above the trigger
+  when there's no room below) so it never overflows on a narrow screen.
+- **Filter drawer** capped to `w-[min(20rem,calc(100vw-3rem))]` so a dismissible backdrop strip
+  always remains at 320px. **Site-switcher / user-menu** dropdowns got `max-w-[calc(100vw-1rem)]`.
+- **`DetailRows`** label capped at `max-w-[45%]` so a long label can't crush the value.
+- **Login** `min-h-screen` → `min-h-dvh` (mobile browser-chrome safe). Heading caps
+  `text-xl sm:text-2xl` applied to Sites/Members for consistency.
+
+### Verification
+- `pnpm typecheck` ✅ (all 5 packages). `pnpm --filter web build` ✅ (19 routes compiled).
+- `pnpm check` (Biome): formatted touched files; **1 remaining error is pre-existing** —
+  `useExhaustiveDependencies` in `purchase-detail-modal.tsx:54`, confirmed present on the base
+  commit (`git stash` check) and untouched by this pass. Left as-is (out of scope).
+
+### Follow-ups
+- The pre-existing Biome lint warning in `purchase-detail-modal.tsx` should be cleaned up
+  separately (drop `purchaseId` from the deps, or restructure the effect).
+- Consider a `container`-query pass on the dashboard cards so the icon shows based on the card's
+  own width rather than a viewport breakpoint (handles future layout changes more robustly).
+
 ## Post-MVP — Invoices (GST tax invoice + non-GST bill) ✅ (2026-06-21)
 
 Customer-facing **billing module** with the two variants the owner asked for, generated as

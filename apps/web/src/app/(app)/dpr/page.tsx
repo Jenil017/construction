@@ -168,7 +168,7 @@ export default function DprPage() {
                         <button
                           type="button"
                           onClick={() => openEdit(dpr)}
-                          className="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-primary transition-colors active:bg-primary/10"
+                          className="inline-flex min-h-11 items-center gap-1 rounded-md px-3 text-primary transition-colors active:bg-primary/10"
                         >
                           <Pencil className="size-4" />
                           Edit
@@ -177,7 +177,7 @@ export default function DprPage() {
                           <button
                             type="button"
                             onClick={() => onDelete(dpr)}
-                            className="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-danger transition-colors active:bg-danger/10"
+                            className="inline-flex min-h-11 items-center gap-1 rounded-md px-3 text-danger transition-colors active:bg-danger/10"
                           >
                             <Trash2 className="size-4" />
                             Delete

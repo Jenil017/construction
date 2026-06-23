@@ -46,24 +46,26 @@ export function ExpenseWeekCard() {
       href="/expenses"
       className="block h-full rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
     >
-      <Card className="h-full cursor-pointer p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
+      <Card className="h-full cursor-pointer p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-[0.68rem] font-semibold uppercase tracking-widest text-muted-foreground">
               Expenses · 7 days
             </p>
-            <p className="mt-2 text-[1.65rem] font-semibold leading-none tracking-tight tabular-nums">
+            <p className="mt-2 truncate text-xl font-semibold leading-none tracking-tight tabular-nums sm:text-[1.65rem]">
               {isLoading ? (
                 <span className="text-muted-foreground/30">—</span>
               ) : (
-                `₹${weekTotal.toLocaleString("en-IN")}`
+                `₹${Math.round(weekTotal).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`
               )}
             </p>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="text-xs text-muted-foreground">
                 Today:&nbsp;
                 <span className="font-semibold text-foreground/80">
-                  {isLoading ? "—" : `₹${todayTotal.toLocaleString("en-IN")}`}
+                  {isLoading
+                    ? "—"
+                    : `₹${Math.round(todayTotal).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
                 </span>
               </span>
               {!isLoading && trendPct !== null && (

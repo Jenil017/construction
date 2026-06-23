@@ -147,8 +147,8 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
               <TableHeader>
                 <TableRow>
                   <TableHead>Item</TableHead>
-                  <TableHead className="text-right">Qty</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead className="whitespace-nowrap text-right">Qty</TableHead>
+                  <TableHead className="whitespace-nowrap text-right">Amount</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -162,10 +162,12 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
                         </Badge>
                       ) : null}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">
                       {it.quantity} {it.unit ?? ""}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">₹{it.amount}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">
+                      ₹{it.amount}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

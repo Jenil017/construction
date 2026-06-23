@@ -273,10 +273,10 @@ export function UserFormModal({ open, onClose, user }: UserFormModalProps) {
             {MODULES.map(({ module, label }) => (
               <div
                 key={module}
-                className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5"
+                className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
               >
                 <span className="text-sm">{label}</span>
-                <div className="flex flex-wrap justify-end gap-1">
+                <div className="grid w-full grid-cols-3 gap-1 sm:flex sm:w-auto sm:justify-end">
                   {(
                     [
                       ["none", "None"],
@@ -288,7 +288,7 @@ export function UserFormModal({ open, onClose, user }: UserFormModalProps) {
                       key={value}
                       type="button"
                       onClick={() => setGrant(module, value)}
-                      className={`rounded-md border px-2 py-1 text-xs transition-colors ${
+                      className={`rounded-md border px-2 py-1.5 text-xs transition-colors ${
                         grid[module] === value
                           ? "border-primary bg-primary/10 text-primary"
                           : "text-muted-foreground hover:bg-accent"

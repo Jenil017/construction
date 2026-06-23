@@ -17,7 +17,7 @@ export function TodayExpensesCard() {
   return (
     <StatCard
       label="Today's Expenses"
-      value={`₹${total.toLocaleString("en-IN")}`}
+      value={`₹${Math.round(total).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
       icon={Receipt}
       href="/expenses"
       tone="teal"

@@ -415,7 +415,9 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
                   <div
                     className={cn(
                       "grid gap-2",
-                      isTax ? "grid-cols-2 sm:grid-cols-6" : "grid-cols-2 sm:grid-cols-5",
+                      isTax
+                        ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-6"
+                        : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5",
                     )}
                   >
                     <Input

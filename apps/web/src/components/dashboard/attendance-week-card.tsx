@@ -57,14 +57,14 @@ export function AttendanceWeekCard() {
       href="/attendance"
       className="block h-full rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
     >
-      <Card className="h-full cursor-pointer p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
+      <Card className="h-full cursor-pointer p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-[0.68rem] font-semibold uppercase tracking-widest text-muted-foreground">
               Attendance · today
             </p>
             <div className="mt-2 flex items-baseline gap-1.5">
-              <span className="text-[1.65rem] font-semibold leading-none tracking-tight tabular-nums">
+              <span className="text-xl font-semibold leading-none tracking-tight tabular-nums sm:text-[1.65rem]">
                 {isLoading ? <span className="text-muted-foreground/30">—</span> : todayPresent}
               </span>
               {!isLoading && totalWorkers > 0 && (

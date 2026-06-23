@@ -49,7 +49,7 @@ export default function SalaryPage() {
           value={month}
           max={currentMonth()}
           onChange={(e) => setMonth(e.target.value)}
-          className="w-auto"
+          className="w-40 sm:w-auto"
           aria-label="Month"
         />
       </div>

@@ -58,7 +58,15 @@ export function Combobox({
     const el = triggerRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    setPos({ top: r.bottom + 6, left: r.left, width: r.width });
+    // Clamp to the viewport so the dropdown never overflows on narrow screens:
+    // keep an 8px gutter on the right edge, and flip above the trigger when
+    // there isn't room for the ~260px list below it.
+    const MARGIN = 8;
+    const LIST_H = 264;
+    const left = Math.max(MARGIN, Math.min(r.left, window.innerWidth - r.width - MARGIN));
+    const fitsBelow = window.innerHeight - r.bottom >= LIST_H;
+    const top = fitsBelow ? r.bottom + 6 : Math.max(MARGIN, r.top - LIST_H - 6);
+    setPos({ top, left, width: r.width });
   };
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: position only when opening
@@ -119,7 +127,7 @@ export function Combobox({
         id={id}
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
-        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-card px-3 text-left text-sm shadow-xs outline-none transition-[box-shadow,border-color] hover:border-foreground/25 focus-visible:border-accent-solid focus-visible:ring-2 focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-11 w-full items-center justify-between gap-2 rounded-md border border-input bg-card px-3 text-left text-sm shadow-xs outline-none transition-[box-shadow,border-color] hover:border-foreground/25 focus-visible:border-accent-solid focus-visible:ring-2 focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50 sm:h-10"
       >
         <span className={cn("truncate", !selected && "text-muted-foreground/70")}>
           {selected ? selected.label : placeholder}

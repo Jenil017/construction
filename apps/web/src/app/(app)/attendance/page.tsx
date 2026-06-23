@@ -44,7 +44,7 @@ export default function AttendancePage() {
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+            className={`flex-1 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
               tab === t.id
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-accent"
@@ -116,33 +116,20 @@ function WorkersTab({ canManage }: { canManage: CanFn }) {
         ) : !workers || workers.length === 0 ? (
           <div className="py-16 text-center text-sm text-muted-foreground">No workers yet.</div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-full">Worker</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Mobile</TableHead>
-                <TableHead className="text-right">Daily wage</TableHead>
-                <TableHead className="text-right">OT rate</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <>
+            {/* Mobile: stacked cards (avoids wide-table overflow). */}
+            <ul className="divide-y md:hidden">
               {workers.map((w) => (
-                <TableRow key={w.id}>
-                  <TableCell className="font-medium">{w.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{w.category ?? "—"}</TableCell>
-                  <TableCell className="whitespace-nowrap text-muted-foreground">
-                    {w.phone ?? "—"}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap text-right tabular-nums">
-                    ₹{w.dailyWage}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap text-right tabular-nums text-muted-foreground">
-                    {w.overtimeRate != null ? `₹${w.overtimeRate}/hr` : "—"}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
+                <li key={w.id} className="space-y-1.5 px-4 py-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{w.name}</p>
+                      <p className="truncate text-sm text-muted-foreground">
+                        {w.category ?? "—"}
+                        {w.phone ? ` · ${w.phone}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
                       {canUpdate ? (
                         <Button variant="ghost" size="sm" onClick={() => openEdit(w)}>
                           Edit
@@ -159,11 +146,67 @@ function WorkersTab({ canManage }: { canManage: CanFn }) {
                         </Button>
                       ) : null}
                     </div>
-                  </TableCell>
-                </TableRow>
+                  </div>
+                  <p className="text-sm tabular-nums text-muted-foreground">
+                    ₹{w.dailyWage}/day
+                    {w.overtimeRate != null ? ` · OT ₹${w.overtimeRate}/hr` : ""}
+                  </p>
+                </li>
               ))}
-            </TableBody>
-          </Table>
+            </ul>
+
+            {/* Desktop: full table. */}
+            <div className="hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-full">Worker</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead>Mobile</TableHead>
+                    <TableHead className="text-right">Daily wage</TableHead>
+                    <TableHead className="text-right">OT rate</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {workers.map((w) => (
+                    <TableRow key={w.id}>
+                      <TableCell className="font-medium">{w.name}</TableCell>
+                      <TableCell className="text-muted-foreground">{w.category ?? "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">
+                        {w.phone ?? "—"}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-right tabular-nums">
+                        ₹{w.dailyWage}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-right tabular-nums text-muted-foreground">
+                        {w.overtimeRate != null ? `₹${w.overtimeRate}/hr` : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          {canUpdate ? (
+                            <Button variant="ghost" size="sm" onClick={() => openEdit(w)}>
+                              Edit
+                            </Button>
+                          ) : null}
+                          {canDelete ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-danger hover:text-danger"
+                              onClick={() => onDelete(w)}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
       </div>
 

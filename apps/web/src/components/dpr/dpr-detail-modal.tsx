@@ -119,7 +119,7 @@ export function DprDetailModal({ dprId, onClose, onEdit }: DprDetailModalProps) 
                 No photos.
               </p>
             ) : (
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                 {dpr.photos.map((photo) => (
                   <a
                     key={photo.id}

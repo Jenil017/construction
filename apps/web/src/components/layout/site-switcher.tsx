@@ -33,16 +33,16 @@ export function SiteSwitcher() {
         onClick={() => multi && setOpen((o) => !o)}
         aria-haspopup={multi}
         aria-expanded={open}
-        className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-hover disabled:cursor-default disabled:hover:bg-transparent"
+        className="flex min-h-10 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-hover disabled:cursor-default disabled:hover:bg-transparent"
         disabled={!multi}
       >
-        <MapPin className="size-4 text-sidebar-muted" />
-        <span className="max-w-[9rem] truncate font-medium">{activeSite.name}</span>
+        <MapPin className="size-4 shrink-0 text-sidebar-muted" />
+        <span className="max-w-[30vw] truncate font-medium sm:max-w-[9rem]">{activeSite.name}</span>
         {multi ? <ChevronsUpDown className="size-4 text-sidebar-muted" /> : null}
       </button>
 
       {open && multi ? (
-        <div className="absolute left-0 z-40 mt-1 w-56 rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
+        <div className="absolute left-0 z-40 mt-1 w-56 max-w-[calc(100vw-1rem)] rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
           <p className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Switch site
           </p>
@@ -54,7 +54,7 @@ export function SiteSwitcher() {
                 switchSite(site.id);
                 setOpen(false);
               }}
-              className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors hover:bg-accent"
+              className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-2.5 text-sm transition-colors hover:bg-accent"
             >
               <span className="flex min-w-0 flex-col text-left">
                 <span className="truncate">{site.name}</span>
