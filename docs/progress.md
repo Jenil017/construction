@@ -2,6 +2,76 @@
 
 Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 
+## Post-MVP — Professional invoice PDF redesign ✅ (2026-06-26)
+
+The owner asked for the invoice PDF to look like a real GST / non-GST invoice. Rebuilt the
+pdf-lib renderer (`apps/api/src/modules/invoices/invoices.pdf.ts`) to the statutory layout —
+**backend-only, no schema/route change** (all figures already in `InvoicePdfData`; the CGST/SGST
+vs IGST split is derived from `taxAmount` + `supplyType`).
+
+### Delivered
+- **Boxed, bordered layout**: title band ("TAX INVOICE" / "BILL OF SUPPLY" + "ORIGINAL FOR
+  RECIPIENT"), seller letterhead box + invoice-details box, a boxed "BILL TO", and a full outer
+  frame.
+- **Gridded items table** — column separators + shaded header + zebra rows (replacing the old
+  sparse horizontal rules).
+- **HSN/SAC-wise Tax Summary table** (tax invoices) with the **CGST %/amt + SGST %/amt** (intra)
+  or **IGST %/amt** (inter) breakup and a totals row — the hallmark of a real GST invoice.
+- **Amount-in-words box + totals box** (Sub Total / discount / CGST·SGST·IGST / round off /
+  highlighted Grand Total), a **declaration**, optional **Notes/Terms**, and a bottom-anchored
+  **signature box** ("For <Seller>" wrapped to fit + Authorised Signatory).
+- Bill of Supply variant drops all tax columns + the summary, per Rule 49.
+
+### Verification
+- `pnpm --filter api typecheck` ✅, Biome ✅, API `wrangler` dry-run build ✅.
+- **Visually verified**: rendered sample tax-intra, tax-inter, and bill PDFs with a throwaway
+  esbuild probe, rasterized via `pdf-to-img`, and inspected — layout is clean and the
+  CGST/SGST/IGST math reconciles between the line items, the HSN summary, and the totals. (Web
+  search was unavailable in the dev env; used the known CBIC Rule 46/49 format.)
+
+### Follow-ups
+- `toAscii` (shared `reports.render`) maps unknown Unicode punctuation (e.g. em-dash, curly
+  quotes) to "?"; consider extending it to fold common punctuation to ASCII so pasted descriptions
+  render cleanly. Affects all PDFs (reports too), so left out of this scoped change.
+- Optional: seller logo + bank details block (needs new stored fields).
+
+## Post-MVP — Invoice prefill from a past sale / purchase ✅ (2026-06-26)
+
+The owner asked to "connect the invoice to buy & sell" — fetch data from a previous purchase or
+sale and fill it into a new invoice instead of re-typing.
+
+### Decisions made (with the product owner)
+- **Prefill only (copy & edit), no stored link.** Picking a source copies its values into the
+  create form; the user edits freely and saves. **No DB migration, frontend-only** — all the data
+  is already exposed by `GET /selling`, `GET /purchases`, `GET /purchases/{id}`.
+- **Sale → fills buyer + the sold item** (a sale is a real billable customer event): buyerName,
+  buyerContact, invoiceDate(=saleDate), paymentMode, amountReceived, notes, and one line item
+  (description, qty, unit, rate). GST/HSN/state are left for the user.
+- **Purchase → fills line items only.** A purchase's party is a *supplier*, not a customer you
+  bill, so only the materials/qty/rate seed the invoice lines; the user enters who to bill.
+
+### Delivered
+- **Web only** (`apps/web/src/components/invoices/invoice-form-modal.tsx`): a new **"Prefill from a
+  past transaction"** section (create mode only, permission-gated on `selling:view` /
+  `purchases:view`). A source dropdown (None / A sale / A purchase) reveals a record picker
+  (`SalePicker` via `useSales`, `PurchasePicker` via `usePurchases`); choosing a sale seeds the
+  form synchronously, choosing a purchase fetches `GET /purchases/{id}` and seeds the line items.
+  A small confirmation note tells the user what was filled (and, for purchases, to enter the
+  customer). No backend, schema, or hook changes.
+
+### Verification
+- `pnpm --filter web typecheck` ✅, Biome on the changed file ✅, dev server hot-reload compiled
+  `/invoices` clean. (Full `pnpm build` skipped to avoid colliding with the running dev server;
+  typecheck + route compile cover it.)
+- **Manual smoke** (owner): open Invoices → New invoice → Prefill → A sale → pick one → buyer +
+  item fill in; switch to A purchase → pick one → line items fill, buyer stays blank. Edit and save.
+
+### Follow-ups
+- Optional later: a stored source link (sourceSaleId/sourcePurchaseId) to flag already-invoiced
+  sales and prevent double-billing — needs a migration; deliberately not built now.
+- Optional: a "Create invoice" shortcut button on the sale/purchase detail modals (contextual entry
+  to the same prefill).
+
 ## Post-MVP — Salary module clarity rework (3-KPI model + worker ledger) ✅ (2026-06-26)
 
 Reworked the Salary module after the owner reported the per-worker numbers were unreadable

@@ -6,7 +6,7 @@ import { Field, FormRow, FormSection } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
-import { ApiError } from "@/lib/api-client";
+import { ApiError, apiFetch } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth/auth-context";
 import {
   type CreateInvoiceInput,
@@ -18,6 +18,8 @@ import {
   useCreateInvoice,
   useUpdateInvoice,
 } from "@/lib/hooks/use-invoices";
+import { type PurchaseDetail, usePurchases } from "@/lib/hooks/use-purchases";
+import { type SiteSale, useSales } from "@/lib/hooks/use-selling";
 import { cn } from "@/lib/utils";
 import { FileText, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -96,6 +98,63 @@ function toNum(s: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+type PrefillSource = "" | "sale" | "purchase";
+
+/** Picks a recent (non-cancelled) sale to seed an invoice's buyer + line. */
+function SalePicker({ onPick }: { onPick: (sale: SiteSale) => void }) {
+  const { data, isLoading } = useSales({});
+  const sales = (data ?? []).filter((s) => s.status !== "cancelled");
+  return (
+    <Select
+      id="inv-prefill-rec"
+      aria-label="Select a sale"
+      defaultValue=""
+      onChange={(e) => {
+        const s = sales.find((x) => x.id === e.target.value);
+        if (s) onPick(s);
+      }}
+    >
+      <option value="" disabled>
+        {isLoading ? "Loading sales…" : sales.length ? "Select a sale…" : "No sales yet"}
+      </option>
+      {sales.map((s) => (
+        <option key={s.id} value={s.id}>
+          {s.saleDate} · {s.itemDescription} · {s.buyerName ?? "—"} · {formatINR(s.totalAmount)}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
+/** Picks a recent (non-cancelled) purchase to seed an invoice's line items. */
+function PurchasePicker({ onPick }: { onPick: (id: string) => void }) {
+  const { data, isLoading } = usePurchases({});
+  const purchases = (data ?? []).filter((p) => p.status !== "cancelled");
+  return (
+    <Select
+      id="inv-prefill-rec"
+      aria-label="Select a purchase"
+      defaultValue=""
+      onChange={(e) => {
+        if (e.target.value) onPick(e.target.value);
+      }}
+    >
+      <option value="" disabled>
+        {isLoading
+          ? "Loading purchases…"
+          : purchases.length
+            ? "Select a purchase…"
+            : "No purchases yet"}
+      </option>
+      {purchases.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.orderDate} · {p.sellerName ?? p.poNumber ?? "Purchase"} · {formatINR(p.total)}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
 interface InvoiceFormModalProps {
   open: boolean;
   onClose: () => void;
@@ -104,9 +163,11 @@ interface InvoiceFormModalProps {
 
 export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalProps) {
   const isEdit = !!invoice;
-  const { activeSite } = useAuth();
+  const { activeSite, can } = useAuth();
   const createInvoice = useCreateInvoice();
   const updateInvoice = useUpdateInvoice();
+  const canPrefillSale = can("selling", "view");
+  const canPrefillPurchase = can("purchases", "view");
 
   const [invoiceType, setInvoiceType] = useState<InvoiceType>("tax");
   const [invoiceDate, setInvoiceDate] = useState(today());
@@ -126,10 +187,14 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
   const [paymentMode, setPaymentMode] = useState("Cash");
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
   const [error, setError] = useState<string | null>(null);
+  const [prefillSource, setPrefillSource] = useState<PrefillSource>("");
+  const [prefillNote, setPrefillNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setPrefillSource("");
+    setPrefillNote(null);
     setInvoiceType(invoice?.invoiceType ?? "tax");
     setInvoiceDate(invoice?.invoiceDate ?? today());
     setDueDate(invoice?.dueDate ?? "");
@@ -186,6 +251,58 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
   const addLine = () => setLines((prev) => [...prev, emptyLine()]);
   const removeLine = (i: number) =>
     setLines((prev) => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
+
+  // ── Prefill from a past sale (buyer + the sold item) or purchase (line items only) ──
+  const applySale = (sale: SiteSale) => {
+    setError(null);
+    if (sale.buyerName) setBuyerName(sale.buyerName);
+    if (sale.buyerContact) setBuyerContact(sale.buyerContact);
+    setInvoiceDate(sale.saleDate);
+    if (sale.paymentMode) setPaymentMode(sale.paymentMode);
+    setAmountReceived(sale.amountReceived > 0 ? String(sale.amountReceived) : "");
+    if (sale.notes) setNotes(sale.notes);
+    setLines([
+      {
+        id: crypto.randomUUID(),
+        description: sale.itemDescription,
+        hsnCode: "",
+        quantity: String(sale.quantity),
+        unit: sale.unit,
+        rate: String(sale.ratePerUnit),
+        gstRate: "18",
+      },
+    ]);
+    setPrefillNote(`Prefilled from the sale dated ${sale.saleDate}. Review and edit below.`);
+  };
+
+  const applyPurchase = async (id: string) => {
+    setError(null);
+    setPrefillNote(null);
+    try {
+      const detail = await apiFetch<PurchaseDetail>(`/purchases/${id}`);
+      const items = detail.items.filter((it) => it.description.trim().length > 0);
+      if (items.length === 0) {
+        setError("That purchase has no line items to prefill.");
+        return;
+      }
+      setLines(
+        items.map((it) => ({
+          id: crypto.randomUUID(),
+          description: it.description,
+          hsnCode: "",
+          quantity: String(it.quantity),
+          unit: it.unit ?? "",
+          rate: String(it.rate),
+          gstRate: "18",
+        })),
+      );
+      setPrefillNote(
+        `Prefilled ${items.length} line item${items.length === 1 ? "" : "s"} from the purchase. Enter the customer to bill.`,
+      );
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not load that purchase.");
+    }
+  };
 
   const submit = async () => {
     setError(null);
@@ -299,6 +416,45 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
             </button>
           ))}
         </div>
+
+        {/* Prefill from a past sale/purchase (create only). */}
+        {!isEdit && (canPrefillSale || canPrefillPurchase) ? (
+          <FormSection
+            title="Prefill from a past transaction"
+            description="Start from a recent sale (fills buyer + item) or a purchase (fills line items only)."
+          >
+            <FormRow columns={2}>
+              <Field label="Source" htmlFor="inv-prefill-src">
+                <Select
+                  id="inv-prefill-src"
+                  value={prefillSource}
+                  onChange={(e) => {
+                    setPrefillSource(e.target.value as PrefillSource);
+                    setPrefillNote(null);
+                  }}
+                >
+                  <option value="">None</option>
+                  {canPrefillSale ? <option value="sale">A sale</option> : null}
+                  {canPrefillPurchase ? <option value="purchase">A purchase</option> : null}
+                </Select>
+              </Field>
+              {prefillSource === "sale" ? (
+                <Field label="Pick a sale" htmlFor="inv-prefill-rec">
+                  <SalePicker onPick={applySale} />
+                </Field>
+              ) : prefillSource === "purchase" ? (
+                <Field label="Pick a purchase" htmlFor="inv-prefill-rec">
+                  <PurchasePicker onPick={applyPurchase} />
+                </Field>
+              ) : null}
+            </FormRow>
+            {prefillNote ? (
+              <p className="rounded-md bg-success/10 px-3 py-2 text-xs text-success">
+                {prefillNote}
+              </p>
+            ) : null}
+          </FormSection>
+        ) : null}
 
         <FormRow columns={2}>
           <Field label="Invoice date" htmlFor="inv-date">
