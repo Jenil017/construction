@@ -29,9 +29,11 @@ export const salaryWorkerRowSchema = z
     halfDays: z.number(),
     payableDays: z.number(),
     overtimeHours: z.number(),
+    // Money: total payable (gross), what's been handed over (paid = advances + payments),
+    // and what's left (balance = gross − paid). `advances`/`payments` are the breakdown of `paid`.
     gross: z.number(),
     advances: z.number(),
-    netPayable: z.number(),
+    payments: z.number(),
     paid: z.number(),
     balance: z.number(),
     paymentStatus: z.enum(PAYMENT_STATUSES),
@@ -45,13 +47,50 @@ export const salaryMonthSchema = z
       workers: z.number(),
       gross: z.number(),
       advances: z.number(),
-      netPayable: z.number(),
+      payments: z.number(),
       paid: z.number(),
       balance: z.number(),
     }),
     workers: z.array(salaryWorkerRowSchema),
   })
   .openapi("SalaryMonth");
+
+// ─── Per-worker detail (month-switchable) ────────────────────────────────────────
+export const workerSalaryParamSchema = z.object({
+  workerId: z
+    .string()
+    .uuid()
+    .openapi({ param: { name: "workerId", in: "path" } }),
+});
+
+/** One row in the unified money ledger — an advance OR a salary payment. */
+export const salaryTransactionSchema = z
+  .object({
+    id: z.string().uuid(),
+    kind: z.enum(["advance", "payment"]),
+    date: z.string(),
+    amount: z.number(),
+    paymentMode: z.string().nullable(),
+    note: z.string().nullable(),
+    createdBy: personSchema.nullable(),
+    createdAt: z.string(),
+  })
+  .openapi("SalaryTransaction");
+
+export const workerSalaryDetailSchema = z
+  .object({
+    month: z.string(),
+    worker: z.object({
+      id: z.string().uuid(),
+      name: z.string(),
+      category: z.string().nullable(),
+      dailyWage: z.number(),
+      overtimeRate: z.number().nullable(),
+    }),
+    summary: salaryWorkerRowSchema,
+    transactions: z.array(salaryTransactionSchema),
+  })
+  .openapi("WorkerSalaryDetail");
 
 // ─── Advances ──────────────────────────────────────────────────────────────────
 export const advanceSchema = z

@@ -51,6 +51,7 @@ export function PurchaseDetailModal({ purchaseId, onClose }: PurchaseDetailModal
   const canUpdate = can("purchases", "update");
   const canDelete = can("purchases", "delete");
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset on target change only
   useEffect(() => {
     setShowPay(false);
     setError(null);

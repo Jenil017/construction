@@ -157,6 +157,8 @@ Deliverables:
 
 Note: **idempotency keys** (salary generation/payments) and **Attendance Excel / Salary report** exports are deferred (Phase 9 and Phase 8 respectively), like the Inventory/DPR follow-ups. Migration `0003` applied to Neon on 2026-06-09; API smoke test passed 30/30 (see `docs/progress.md`).
 
+**Post-MVP re-split (2026-06-13, migration `0011`):** money (advances + payroll) moved to Salary as a per-worker monthly view; Attendance reduced to workers + daysheet; `worker_categories` added; the `salary_runs` batch flow retired. **Post-MVP clarity rework (2026-06-26, no migration):** Salary collapsed to a **3-KPI model** (Total payable / Paid = advances+payments / Remaining) and the worker modal became a month-switchable view with a unified advance/payment **transaction ledger** (`GET /salary/worker/{workerId}?month=`). See `docs/progress.md`.
+
 ## Phase 7: Expenses, Purchases, And Suppliers — ✅ Completed (2026-06-09)
 
 Goals:

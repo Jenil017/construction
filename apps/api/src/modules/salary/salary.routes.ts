@@ -31,6 +31,8 @@ import {
   paymentSchema,
   salaryIdParamSchema,
   salaryMonthSchema,
+  workerSalaryDetailSchema,
+  workerSalaryParamSchema,
 } from "./salary.schemas";
 
 export const salaryRoutes = new OpenAPIHono<Env>();
@@ -50,11 +52,61 @@ function monthBounds(month: string) {
   return { monthStart: `${month}-01`, monthEnd: `${month}-${String(lastDay).padStart(2, "0")}` };
 }
 
-function derivePaymentStatus(net: number, paid: number): (typeof PAYMENT_STATUSES)[number] {
-  if (net <= 0) return "paid"; // nothing payable
-  if (paid <= 0) return "unpaid";
-  if (paid >= net) return "paid";
-  return "partial";
+/**
+ * Status from total payable (gross) vs all money handed over (paid = advances + payments).
+ * "paid" = the account is cleared (incl. an over-paid worker in credit).
+ */
+function derivePaymentStatus(gross: number, paid: number): (typeof PAYMENT_STATUSES)[number] {
+  if (gross <= 0 && paid <= 0) return "unpaid"; // no work, no money moved
+  if (paid >= gross) return "paid";
+  if (paid > 0) return "partial";
+  return "unpaid";
+}
+
+interface AttAccum {
+  present: number;
+  half: number;
+  ot: number;
+}
+interface WorkerMeta {
+  id: string;
+  name: string;
+  category: string | null;
+  trade: string | null;
+  dailyWage: string;
+  overtimeRate: string | null;
+}
+
+/**
+ * Compute one worker's month figures. `paid` is all money handed over (advances + payments);
+ * `balance` is what's left to pay (gross − paid). Shared by the monthly view and worker detail.
+ */
+function computeWorkerRow(w: WorkerMeta, a: AttAccum, advancesSum: number, paymentsSum: number) {
+  const dailyWage = Number(w.dailyWage);
+  const overtimeRate = w.overtimeRate != null ? Number(w.overtimeRate) : null;
+  const payableDays = a.present + 0.5 * a.half;
+  const gross = round2(payableDays * dailyWage + a.ot * (overtimeRate ?? 0));
+  const advances = round2(advancesSum);
+  const payments = round2(paymentsSum);
+  const paid = round2(advances + payments);
+  const balance = round2(gross - paid);
+  return {
+    workerId: w.id,
+    workerName: w.name,
+    category: w.category ?? w.trade ?? null,
+    dailyWage,
+    overtimeRate,
+    presentDays: a.present,
+    halfDays: a.half,
+    payableDays,
+    overtimeHours: round2(a.ot),
+    gross,
+    advances,
+    payments,
+    paid,
+    balance,
+    paymentStatus: derivePaymentStatus(gross, paid),
+  };
 }
 
 /** Load a live worker on this site (for FK checks on advances/payments). */
@@ -168,42 +220,17 @@ salaryRoutes.openapi(monthlyRoute, async (c) => {
     paidByWorker.set(r.workerId, (paidByWorker.get(r.workerId) ?? 0) + Number(r.amount));
   }
 
-  const totals = { workers: 0, gross: 0, advances: 0, netPayable: 0, paid: 0, balance: 0 };
+  const totals = { workers: 0, gross: 0, advances: 0, payments: 0, paid: 0, balance: 0 };
   const rows = workerRows.map((w) => {
     const a = att.get(w.id) ?? { present: 0, half: 0, ot: 0 };
-    const dailyWage = Number(w.dailyWage);
-    const overtimeRate = w.overtimeRate != null ? Number(w.overtimeRate) : null;
-    const payableDays = a.present + 0.5 * a.half;
-    const gross = round2(payableDays * dailyWage + a.ot * (overtimeRate ?? 0));
-    const advances = round2(advByWorker.get(w.id) ?? 0);
-    const netPayable = round2(gross - advances);
-    const paid = round2(paidByWorker.get(w.id) ?? 0);
-    const balance = round2(netPayable - paid);
-
+    const row = computeWorkerRow(w, a, advByWorker.get(w.id) ?? 0, paidByWorker.get(w.id) ?? 0);
     totals.workers += 1;
-    totals.gross += gross;
-    totals.advances += advances;
-    totals.netPayable += netPayable;
-    totals.paid += paid;
-    totals.balance += balance;
-
-    return {
-      workerId: w.id,
-      workerName: w.name,
-      category: w.category ?? w.trade ?? null,
-      dailyWage,
-      overtimeRate,
-      presentDays: a.present,
-      halfDays: a.half,
-      payableDays,
-      overtimeHours: round2(a.ot),
-      gross,
-      advances,
-      netPayable,
-      paid,
-      balance,
-      paymentStatus: derivePaymentStatus(netPayable, paid),
-    };
+    totals.gross += row.gross;
+    totals.advances += row.advances;
+    totals.payments += row.payments;
+    totals.paid += row.paid;
+    totals.balance += row.balance;
+    return row;
   });
 
   return c.json(
@@ -215,7 +242,7 @@ salaryRoutes.openapi(monthlyRoute, async (c) => {
           workers: totals.workers,
           gross: round2(totals.gross),
           advances: round2(totals.advances),
-          netPayable: round2(totals.netPayable),
+          payments: round2(totals.payments),
           paid: round2(totals.paid),
           balance: round2(totals.balance),
         },
@@ -696,4 +723,158 @@ salaryRoutes.openapi(deletePaymentRoute, async (c) => {
   });
 
   return c.json({ success: true as const, data: { id, deleted: true } }, 200);
+});
+
+// ─── Per-worker detail (summary + unified transaction ledger) ────────────────────
+const workerDetailRoute = createRoute({
+  method: "get",
+  path: "/salary/worker/{workerId}",
+  tags: ["Salary"],
+  summary: "One worker's salary + transaction ledger for a month",
+  description:
+    "Permission: salary:view. For one worker and month (YYYY-MM), returns the pay summary (days, gross, advances, payments, paid, balance) and a single chronological ledger of every advance and payment.",
+  middleware: [requireAuth, requireSiteContext, requirePermission("salary", "view")] as const,
+  request: { params: workerSalaryParamSchema, query: monthQuerySchema },
+  responses: {
+    200: {
+      description: "Worker salary detail",
+      content: { "application/json": { schema: apiSuccessSchema(workerSalaryDetailSchema) } },
+    },
+    403: {
+      description: "Permission denied",
+      content: { "application/json": { schema: apiErrorSchema } },
+    },
+    404: {
+      description: "Worker not found",
+      content: { "application/json": { schema: apiErrorSchema } },
+    },
+  },
+});
+
+salaryRoutes.openapi(workerDetailRoute, async (c) => {
+  const { workerId } = c.req.valid("param");
+  const { month } = c.req.valid("query");
+  const auth = c.get("auth");
+  const db = getDb(c);
+  const siteId = auth.siteId as string;
+  const { monthStart, monthEnd } = monthBounds(month);
+
+  const [w] = await db
+    .select({
+      id: workers.id,
+      name: workers.name,
+      category: workerCategories.name,
+      trade: workers.trade,
+      dailyWage: workers.dailyWage,
+      overtimeRate: workers.overtimeRate,
+    })
+    .from(workers)
+    .leftJoin(workerCategories, eq(workerCategories.id, workers.categoryId))
+    .where(and(eq(workers.id, workerId), eq(workers.siteId, siteId), isNull(workers.deletedAt)))
+    .limit(1);
+  if (!w) throw new NotFoundError("Worker not found.");
+
+  // Attendance for the month.
+  const attRows = await db
+    .select({ status: attendance.status, overtimeHours: attendance.overtimeHours })
+    .from(attendance)
+    .where(
+      and(
+        eq(attendance.siteId, siteId),
+        eq(attendance.workerId, workerId),
+        isNull(attendance.deletedAt),
+        gte(attendance.attendanceDate, monthStart),
+        lte(attendance.attendanceDate, monthEnd),
+      ),
+    );
+  const a: AttAccum = { present: 0, half: 0, ot: 0 };
+  for (const r of attRows) {
+    if (r.status === "present") a.present += 1;
+    else if (r.status === "half_day") a.half += 1;
+    a.ot += Number(r.overtimeHours);
+  }
+
+  // Advances dated in the month + payments applied to the month — merged into one ledger.
+  const advRows = await db
+    .select(advanceColumns)
+    .from(workerAdvances)
+    .innerJoin(workers, eq(workers.id, workerAdvances.workerId))
+    .leftJoin(advCreator, eq(advCreator.id, workerAdvances.createdByUserId))
+    .where(
+      and(
+        eq(workerAdvances.siteId, siteId),
+        eq(workerAdvances.workerId, workerId),
+        isNull(workerAdvances.deletedAt),
+        gte(workerAdvances.advanceDate, monthStart),
+        lte(workerAdvances.advanceDate, monthEnd),
+      ),
+    );
+  const payRows = await db
+    .select(paymentColumns)
+    .from(salaryPayments)
+    .innerJoin(workers, eq(workers.id, salaryPayments.workerId))
+    .leftJoin(payCreator, eq(payCreator.id, salaryPayments.createdByUserId))
+    .where(
+      and(
+        eq(salaryPayments.siteId, siteId),
+        eq(salaryPayments.workerId, workerId),
+        isNull(salaryPayments.deletedAt),
+        eq(salaryPayments.periodMonth, month),
+      ),
+    );
+
+  const advancesSum = advRows.reduce((s, r) => s + Number(r.amount), 0);
+  const paymentsSum = payRows.reduce((s, r) => s + Number(r.amount), 0);
+  const summary = computeWorkerRow(w, a, advancesSum, paymentsSum);
+
+  const transactions = [
+    ...advRows.map((r) => {
+      const s = serializeAdvance(r as AdvanceRow);
+      return {
+        id: s.id,
+        kind: "advance" as const,
+        date: s.advanceDate,
+        amount: s.amount,
+        paymentMode: null,
+        note: s.note,
+        createdBy: s.createdBy,
+        createdAt: s.createdAt,
+      };
+    }),
+    ...payRows.map((r) => {
+      const s = serializePayment(r as PaymentRow);
+      return {
+        id: s.id,
+        kind: "payment" as const,
+        date: s.paidDate,
+        amount: s.amount,
+        paymentMode: s.paymentMode,
+        note: s.note,
+        createdBy: s.createdBy,
+        createdAt: s.createdAt,
+      };
+    }),
+  ].sort((x, y) => {
+    if (x.date !== y.date) return x.date < y.date ? 1 : -1; // date desc
+    return x.createdAt < y.createdAt ? 1 : -1; // newest first within a day
+  });
+
+  return c.json(
+    {
+      success: true as const,
+      data: {
+        month,
+        worker: {
+          id: w.id,
+          name: w.name,
+          category: w.category ?? w.trade ?? null,
+          dailyWage: Number(w.dailyWage),
+          overtimeRate: w.overtimeRate != null ? Number(w.overtimeRate) : null,
+        },
+        summary,
+        transactions,
+      },
+    },
+    200,
+  );
 });

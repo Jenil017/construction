@@ -14,12 +14,10 @@ import {
   type SalaryWorkerRow,
   useDeleteAdvance,
   useDeleteSalaryPayment,
-  useGiveAdvance,
   useRecordSalaryPayment,
-  useWorkerAdvances,
-  useWorkerPayments,
+  useWorkerSalaryDetail,
 } from "@/lib/hooks/use-salary";
-import { Trash2, Wallet } from "lucide-react";
+import { Loader2, Trash2, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface WorkerSalaryModalProps {
@@ -33,79 +31,68 @@ const STATUS_VARIANT: Record<PaymentStatus, BadgeProps["variant"]> = {
   partial: "warning",
   paid: "success",
 };
+const STATUS_LABEL: Record<PaymentStatus, string> = {
+  unpaid: "Unpaid",
+  partial: "Partial",
+  paid: "Cleared",
+};
 const PAYMENT_MODES = ["Cash", "UPI", "Bank transfer", "Cheque"];
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
+function currentMonth(): string {
+  return new Date().toISOString().slice(0, 7);
+}
+/** A sensible date inside the given month — today's day-of-month, clamped to the 28th. */
+function dateInMonth(month: string): string {
+  const day = String(Math.min(Number(today().slice(8, 10)), 28)).padStart(2, "0");
+  return `${month}-${day}`;
+}
 
-type Mode = "view" | "advance" | "pay";
+type Mode = "view" | "pay";
 
 export function WorkerSalaryModal({ row, month, onClose }: WorkerSalaryModalProps) {
   const { can } = useAuth();
   const workerId = row?.workerId ?? null;
 
-  const { data: advances } = useWorkerAdvances(workerId, month);
-  const { data: payments } = useWorkerPayments(workerId, month);
-  const giveAdvance = useGiveAdvance();
-  const recordPayment = useRecordSalaryPayment();
-  const deleteAdvance = useDeleteAdvance();
-  const deletePayment = useDeleteSalaryPayment();
-
+  const [viewMonth, setViewMonth] = useState(month);
   const [mode, setMode] = useState<Mode>("view");
   const [amount, setAmount] = useState("");
-  const [advDate, setAdvDate] = useState(today());
   const [payDate, setPayDate] = useState(today());
   const [paymentMode, setPaymentMode] = useState("Cash");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset whenever the modal target changes
+  const { data: detail, isLoading } = useWorkerSalaryDetail(workerId, viewMonth);
+  const recordPayment = useRecordSalaryPayment();
+  const deleteAdvance = useDeleteAdvance();
+  const deletePayment = useDeleteSalaryPayment();
+
+  // Reset to the page's month + view mode whenever the modal target changes.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset on open/target change only
   useEffect(() => {
+    setViewMonth(month);
     setMode("view");
     setError(null);
   }, [workerId, month]);
 
   if (!row) return null;
 
-  const canCreate = can("salary", "create");
   const canUpdate = can("salary", "update");
   const canDelete = can("salary", "delete");
 
-  const openAdvance = () => {
-    setError(null);
-    setAmount("");
-    setAdvDate(`${month}-${String(Math.min(Number(today().slice(8, 10)), 28)).padStart(2, "0")}`);
-    setNote("");
-    setMode("advance");
-  };
+  const summary = detail?.summary ?? null;
+  const balance = summary?.balance ?? 0;
+  const noActivity = !!summary && summary.gross === 0 && summary.paid === 0;
+
   const openPay = () => {
     setError(null);
-    setAmount(row.balance > 0 ? String(row.balance) : "");
-    setPayDate(today());
+    setAmount(balance > 0 ? String(balance) : "");
+    setPayDate(dateInMonth(viewMonth));
     setPaymentMode("Cash");
     setNote("");
     setMode("pay");
-  };
-
-  const submitAdvance = async () => {
-    setError(null);
-    const amt = Number(amount);
-    if (amount === "" || Number.isNaN(amt) || amt <= 0) {
-      setError("Enter an amount greater than zero.");
-      return;
-    }
-    try {
-      await giveAdvance.mutateAsync({
-        workerId: row.workerId,
-        amount: amt,
-        advanceDate: advDate,
-        note: note.trim() || null,
-      });
-      setMode("view");
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not record the advance.");
-    }
   };
 
   const submitPay = async () => {
@@ -118,7 +105,7 @@ export function WorkerSalaryModal({ row, month, onClose }: WorkerSalaryModalProp
     try {
       await recordPayment.mutateAsync({
         workerId: row.workerId,
-        periodMonth: month,
+        periodMonth: viewMonth,
         amount: amt,
         paidDate: payDate,
         paymentMode,
@@ -130,24 +117,18 @@ export function WorkerSalaryModal({ row, month, onClose }: WorkerSalaryModalProp
     }
   };
 
-  const removeAdvance = async (id: string) => {
-    if (!window.confirm("Delete this advance?")) return;
+  const removeTransaction = async (kind: "advance" | "payment", id: string) => {
+    if (!window.confirm(`Delete this ${kind}?`)) return;
+    setError(null);
     try {
-      await deleteAdvance.mutateAsync(id);
+      if (kind === "advance") await deleteAdvance.mutateAsync(id);
+      else await deletePayment.mutateAsync(id);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not delete the advance.");
-    }
-  };
-  const removePayment = async (id: string) => {
-    if (!window.confirm("Delete this payment?")) return;
-    try {
-      await deletePayment.mutateAsync(id);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not delete the payment.");
+      setError(e instanceof ApiError ? e.message : `Could not delete the ${kind}.`);
     }
   };
 
-  const busy = giveAdvance.isPending || recordPayment.isPending;
+  const busy = recordPayment.isPending;
 
   const footer =
     mode === "view" ? (
@@ -159,8 +140,8 @@ export function WorkerSalaryModal({ row, month, onClose }: WorkerSalaryModalProp
         <Button variant="outline" onClick={() => setMode("view")} disabled={busy}>
           Back
         </Button>
-        <Button onClick={mode === "advance" ? submitAdvance : submitPay} disabled={busy}>
-          {busy ? "Saving…" : mode === "advance" ? "Give advance" : "Record payment"}
+        <Button onClick={submitPay} disabled={busy}>
+          {busy ? "Saving…" : "Record payment"}
         </Button>
       </>
     );
@@ -171,192 +152,141 @@ export function WorkerSalaryModal({ row, month, onClose }: WorkerSalaryModalProp
       onClose={onClose}
       icon={Wallet}
       title={row.workerName}
-      description={`${row.category ?? "Worker"} · ${month}`}
+      description={detail?.worker.category ?? row.category ?? "Worker"}
       footer={footer}
     >
       {mode === "view" ? (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <Badge variant={STATUS_VARIANT[row.paymentStatus]}>{row.paymentStatus}</Badge>
-            <span className="text-muted-foreground">
-              {row.payableDays} day{row.payableDays === 1 ? "" : "s"} worked
-            </span>
-          </div>
-
-          <StatTiles
-            items={[
-              { label: "Gross", value: formatINR(row.gross) },
-              { label: "Advances", value: formatINR(row.advances), tone: "danger" },
-              { label: "Net payable", value: formatINR(row.netPayable) },
-            ]}
-          />
-          <StatTiles
-            items={[
-              { label: "Paid", value: formatINR(row.paid), tone: "success" },
-              {
-                label: "Balance",
-                value: formatINR(row.balance),
-                tone: row.balance > 0 ? "danger" : "default",
-              },
-            ]}
-          />
-
-          <DetailRows
-            rows={[
-              { label: "Daily wage", value: formatINR(row.dailyWage) },
-              { label: "Present days", value: row.presentDays },
-              { label: "Half days", value: row.halfDays },
-              { label: "Payable days", value: row.payableDays },
-              {
-                label: "Overtime",
-                value:
-                  row.overtimeHours > 0
-                    ? `${row.overtimeHours} hr${row.overtimeRate != null ? ` @ ${formatINR(row.overtimeRate)}/hr` : ""}`
-                    : "—",
-                hideEmpty: true,
-              },
-            ]}
-          />
-
-          {/* Advances history */}
-          <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Advances this month
-            </h3>
-            {!advances || advances.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No advances.</p>
-            ) : (
-              <ul className="divide-y rounded-lg border">
-                {advances.map((a) => (
-                  <li
-                    key={a.id}
-                    className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
-                  >
-                    <div className="min-w-0">
-                      <span className="font-medium tabular-nums">{formatINR(a.amount)}</span>
-                      <span className="ml-2 text-muted-foreground">{a.advanceDate}</span>
-                      {a.note ? (
-                        <span className="ml-2 truncate text-muted-foreground">· {a.note}</span>
-                      ) : null}
-                    </div>
-                    {canDelete ? (
-                      <button
-                        type="button"
-                        onClick={() => removeAdvance(a.id)}
-                        className="shrink-0 text-muted-foreground hover:text-danger"
-                        aria-label="Delete advance"
-                      >
-                        <Trash2 className="size-4" />
-                      </button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          {/* Payments history */}
-          <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Payments this month
-            </h3>
-            {!payments || payments.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No payments yet.</p>
-            ) : (
-              <ul className="divide-y rounded-lg border">
-                {payments.map((p) => (
-                  <li
-                    key={p.id}
-                    className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
-                  >
-                    <div className="min-w-0">
-                      <span className="font-medium tabular-nums">{formatINR(p.amount)}</span>
-                      <span className="ml-2 text-muted-foreground">{p.paidDate}</span>
-                      {p.paymentMode ? (
-                        <span className="ml-2 text-muted-foreground">· {p.paymentMode}</span>
-                      ) : null}
-                    </div>
-                    {canDelete ? (
-                      <button
-                        type="button"
-                        onClick={() => removePayment(p.id)}
-                        className="shrink-0 text-muted-foreground hover:text-danger"
-                        aria-label="Delete payment"
-                      >
-                        <Trash2 className="size-4" />
-                      </button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          {error ? (
-            <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
-          ) : null}
-
-          {canCreate || canUpdate ? (
-            <div className="flex flex-wrap gap-2 border-t pt-3">
-              {canCreate ? (
-                <Button variant="outline" size="sm" onClick={openAdvance}>
-                  Give advance
-                </Button>
-              ) : null}
-              {canUpdate && row.balance > 0 ? (
-                <Button size="sm" onClick={openPay}>
-                  Record payment
-                </Button>
+          {/* Status + month switcher — view this worker's pay for any month. */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm">
+              {summary ? (
+                noActivity ? (
+                  <span className="text-muted-foreground">No activity</span>
+                ) : (
+                  <>
+                    <Badge variant={STATUS_VARIANT[summary.paymentStatus]}>
+                      {STATUS_LABEL[summary.paymentStatus]}
+                    </Badge>
+                    <span className="text-muted-foreground">
+                      {summary.payableDays} day{summary.payableDays === 1 ? "" : "s"} worked
+                    </span>
+                  </>
+                )
               ) : null}
             </div>
-          ) : null}
-        </div>
-      ) : mode === "advance" ? (
-        <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            An advance is deducted from {row.workerName}'s net pay for the month it falls in.
-          </p>
-          <Field label="Amount (₹)" htmlFor="adv-amount" required>
             <Input
-              id="adv-amount"
-              type="number"
-              min="0"
-              step="any"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              autoFocus
+              type="month"
+              value={viewMonth}
+              max={currentMonth()}
+              onChange={(e) => setViewMonth(e.target.value)}
+              className="w-36"
+              aria-label="Month"
             />
-          </Field>
-          <Field label="Date" htmlFor="adv-date">
-            <Input
-              id="adv-date"
-              type="date"
-              value={advDate}
-              onChange={(e) => setAdvDate(e.target.value)}
-            />
-          </Field>
-          <Field label="Note" htmlFor="adv-note">
-            <Input
-              id="adv-note"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Optional"
-            />
-          </Field>
-          {error ? (
-            <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
-          ) : null}
+          </div>
+
+          {isLoading || !summary ? (
+            <div className="flex items-center justify-center py-10 text-muted-foreground">
+              <Loader2 className="size-5 animate-spin" />
+            </div>
+          ) : (
+            <>
+              <StatTiles
+                items={[
+                  { label: "Total payable", value: formatINR(summary.gross) },
+                  { label: "Paid", value: formatINR(summary.paid), tone: "success" },
+                  {
+                    label: "Remaining",
+                    value: formatINR(summary.balance),
+                    tone: summary.balance > 0 ? "danger" : "default",
+                  },
+                  { label: "Per day", value: formatINR(summary.dailyWage) },
+                ]}
+              />
+
+              <DetailRows
+                rows={[
+                  { label: "Present days", value: summary.presentDays },
+                  { label: "Half days", value: summary.halfDays },
+                  { label: "Payable days", value: summary.payableDays },
+                  {
+                    label: "Overtime",
+                    value:
+                      summary.overtimeHours > 0
+                        ? `${summary.overtimeHours} hr${summary.overtimeRate != null ? ` @ ${formatINR(summary.overtimeRate)}/hr` : ""}`
+                        : "—",
+                    hideEmpty: true,
+                  },
+                ]}
+              />
+
+              {/* Unified transaction ledger — every advance and payment, newest first. */}
+              <section className="space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Transactions
+                </h3>
+                {!detail || detail.transactions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No payments this month.</p>
+                ) : (
+                  <ul className="divide-y rounded-lg border">
+                    {detail.transactions.map((t) => (
+                      <li
+                        key={t.id}
+                        className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+                      >
+                        <div className="min-w-0 space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <Badge variant={t.kind === "advance" ? "warning" : "success"}>
+                              {t.kind === "advance" ? "Advance" : "Payment"}
+                            </Badge>
+                            <span className="font-medium tabular-nums">{formatINR(t.amount)}</span>
+                          </div>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {t.date}
+                            {t.paymentMode ? ` · ${t.paymentMode}` : ""}
+                            {t.note ? ` · ${t.note}` : ""}
+                          </p>
+                        </div>
+                        {canDelete ? (
+                          <button
+                            type="button"
+                            onClick={() => removeTransaction(t.kind, t.id)}
+                            className="shrink-0 text-muted-foreground hover:text-danger"
+                            aria-label={`Delete ${t.kind}`}
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              {error ? (
+                <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
+              ) : null}
+
+              {canUpdate ? (
+                <div className="border-t pt-3">
+                  <Button size="sm" className="w-full sm:w-auto" onClick={openPay}>
+                    Record payment
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
       ) : (
         <div className="space-y-4">
           <StatTiles
             items={[
-              { label: "Net payable", value: formatINR(row.netPayable) },
-              { label: "Paid", value: formatINR(row.paid), tone: "success" },
+              { label: "Total payable", value: formatINR(summary?.gross ?? 0) },
+              { label: "Paid", value: formatINR(summary?.paid ?? 0), tone: "success" },
               {
-                label: "Balance",
-                value: formatINR(row.balance),
-                tone: row.balance > 0 ? "danger" : "default",
+                label: "Remaining",
+                value: formatINR(balance),
+                tone: balance > 0 ? "danger" : "default",
               },
             ]}
           />

@@ -5,11 +5,11 @@ import { users } from "./users";
 import { workers } from "./workers";
 
 /**
- * A payment made to a worker against a month's net salary (see the Salary module's
- * per-worker monthly view). Net payable for a month is computed on the fly from
- * attendance and advances; these rows record what has actually been paid out, so a
- * worker's balance for a month = netPayable − Σ payments. `periodMonth` is the
- * "YYYY-MM" the payment is applied to. Site-scoped, soft-deleted.
+ * A salary payment (settlement) made to a worker for a month (see the Salary module's
+ * per-worker monthly view). A month's gross is computed on the fly from attendance;
+ * "paid" = Σ advances + Σ payments and a worker's balance = gross − paid. These rows
+ * record the salary-payment side of that (advances live in `worker_advances`).
+ * `periodMonth` is the "YYYY-MM" the payment is applied to. Site-scoped, soft-deleted.
  */
 export const salaryPayments = pgTable(
   "salary_payments",

@@ -20,10 +20,14 @@ export interface SalaryWorkerRow {
   halfDays: number;
   payableDays: number;
   overtimeHours: number;
+  /** Total payable this month (days × wage + overtime). */
   gross: number;
+  /** Breakdown of `paid`: money given as advances vs as salary payments. */
   advances: number;
-  netPayable: number;
+  payments: number;
+  /** All money handed over = advances + payments. */
   paid: number;
+  /** What's left to pay = gross − paid. */
   balance: number;
   paymentStatus: PaymentStatus;
 }
@@ -32,7 +36,7 @@ export interface SalaryMonthTotals {
   workers: number;
   gross: number;
   advances: number;
-  netPayable: number;
+  payments: number;
   paid: number;
   balance: number;
 }
@@ -41,6 +45,31 @@ export interface SalaryMonth {
   month: string;
   totals: SalaryMonthTotals;
   workers: SalaryWorkerRow[];
+}
+
+/** One row in a worker's unified money ledger — an advance OR a salary payment. */
+export interface SalaryTransaction {
+  id: string;
+  kind: "advance" | "payment";
+  date: string;
+  amount: number;
+  paymentMode: string | null;
+  note: string | null;
+  createdBy: Person | null;
+  createdAt: string;
+}
+
+export interface WorkerSalaryDetail {
+  month: string;
+  worker: {
+    id: string;
+    name: string;
+    category: string | null;
+    dailyWage: number;
+    overtimeRate: number | null;
+  };
+  summary: SalaryWorkerRow;
+  transactions: SalaryTransaction[];
 }
 
 export interface WorkerAdvance {
@@ -79,20 +108,16 @@ export function useSalaryMonth(month: string) {
   });
 }
 
-// ─── Advances ──────────────────────────────────────────────────────────────────
-export function useWorkerAdvances(workerId: string | null, month?: string) {
+/** One worker's month figures + a single chronological advance/payment ledger. */
+export function useWorkerSalaryDetail(workerId: string | null, month: string) {
   return useQuery({
-    queryKey: [...KEY, "advances", workerId, month],
-    enabled: !!workerId,
-    queryFn: () => {
-      const qs = new URLSearchParams();
-      if (workerId) qs.set("workerId", workerId);
-      if (month) qs.set("month", month);
-      return apiFetch<WorkerAdvance[]>(`/salary/advances?${qs.toString()}`);
-    },
+    queryKey: [...KEY, "worker", workerId, month],
+    enabled: !!workerId && !!month,
+    queryFn: () => apiFetch<WorkerSalaryDetail>(`/salary/worker/${workerId}?month=${month}`),
   });
 }
 
+// ─── Advances ──────────────────────────────────────────────────────────────────
 export function useGiveAdvance() {
   const qc = useQueryClient();
   return useMutation({
@@ -121,19 +146,6 @@ export function useDeleteAdvance() {
 }
 
 // ─── Payments ────────────────────────────────────────────────────────────────────
-export function useWorkerPayments(workerId: string | null, month?: string) {
-  return useQuery({
-    queryKey: [...KEY, "payments", workerId, month],
-    enabled: !!workerId,
-    queryFn: () => {
-      const qs = new URLSearchParams();
-      if (workerId) qs.set("workerId", workerId);
-      if (month) qs.set("month", month);
-      return apiFetch<SalaryPaymentRecord[]>(`/salary/payments?${qs.toString()}`);
-    },
-  });
-}
-
 export function useRecordSalaryPayment() {
   const qc = useQueryClient();
   return useMutation({

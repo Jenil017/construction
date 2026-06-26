@@ -2,6 +2,67 @@
 
 Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 
+## Post-MVP — Salary module clarity rework (3-KPI model + worker ledger) ✅ (2026-06-26)
+
+Reworked the Salary module after the owner reported the per-worker numbers were unreadable
+("if I can't understand them, how do I explain them to a client?"). The old screen showed **5
+KPIs** — Gross / Advances / Net payable / Paid / Balance — and treated advances and payments as
+**two different deductions** (`netPayable = gross − advances`, then `balance = netPayable −
+payments`). That two-step subtraction was the source of confusion.
+
+### Decisions made (with the product owner)
+- **One mental model, 3 KPIs:** **Total payable** (gross = days × wage + OT), **Paid** (= Σ
+  advances + Σ payments — *all* money handed over), **Remaining** (= Total − Paid). Advances and
+  salary payments are both just "money given." (Maths is unchanged — the old `balance` already
+  equalled `gross − advances − payments`; this drops the misleading `netPayable` middle step.)
+- **One "Record payment" action.** The two buttons (Give advance / Record payment) were collapsed
+  into a **single Record payment** button — advances and payments now reduce the balance
+  identically, so the distinction added no value at entry. New money is written as a **payment**
+  (`salary_payments`). Legacy advances (and the `POST /salary/advances` endpoint) are kept: old
+  advances still appear in the ledger tagged *Advance* and remain deletable. No data dropped —
+  `worker_advances` + `salary_payments` tables unchanged. **No migration.**
+- **One chronological ledger** in the worker modal merges every advance + payment for the month
+  (newest first, `kind`-tagged), with per-row delete.
+- **Month-wise & independent.** The worker modal is now **month-switchable** (defaults to the
+  page's month; pick any past month) — the answer to "construction projects run 2–3 years." Each
+  month stands alone; paying a leftover balance later is a payment tagged to the month it settles.
+  No cross-month carry-forward.
+- **Status** relabelled: `paid → "Cleared"` (account clear when Remaining ≤ 0); a worker with no
+  attendance and no money moved shows a neutral "—" instead of a red "Unpaid".
+
+### Delivered
+- **API** (`apps/api/src/modules/salary`): `GET /salary/monthly` reshaped — per-worker + totals
+  now return `{ gross, advances, payments, paid (= advances+payments), balance (= gross−paid),
+  paymentStatus }` (dropped `netPayable`); `derivePaymentStatus(gross, paid)` rewritten. New
+  **`GET /salary/worker/{workerId}?month=YYYY-MM`** returns one worker's `summary` + a single
+  `transactions[]` ledger (advances + payments, `kind`-tagged, newest first). Shared
+  `computeWorkerRow` helper keeps the monthly view and worker detail consistent. Advances/payments
+  create/delete endpoints unchanged.
+- **Web** (`apps/web`): Salary page → 3 KPI tiles (Total payable / Paid / Remaining), mobile
+  cards trimmed to **name + days + status**, desktop table to Worker / Days / Total payable /
+  Paid / Remaining / Status / View. Worker modal rebuilt around the new
+  `useWorkerSalaryDetail(workerId, month)` hook: in-modal **month picker**, **4 KPIs** (Total /
+  Paid / Remaining / **Per day**), day breakdown, and the **unified transaction ledger** with
+  per-row delete routed by `kind`. Removed the now-dead `useWorkerAdvances`/`useWorkerPayments`
+  list hooks.
+- Also added the codebase's standard `biome-ignore` to a pre-existing reset-effect lint error in
+  `purchases/purchase-detail-modal.tsx` (unrelated; it was blocking the shared `pnpm check` gate).
+
+### Verification
+- `pnpm typecheck` (5 pkgs) ✅, `pnpm check` (Biome, 227 files) ✅, `pnpm build` (web `/salary`
+  6.1 kB + API wrangler dry-run) ✅.
+- Runtime (`wrangler dev`): API boots clean, `/health` ok, all 6 salary routes registered incl.
+  the new `/salary/worker/{workerId}` (OpenAPI), DB reachable (login pipeline hits the users
+  table).
+- **Pending owner verification** (data-level smoke needs the real admin password — default seed
+  creds were already rotated): log in → open Salary for a month → confirm `Paid = advances +
+  payments` and `Remaining = Total − Paid`, open a worker → switch month → the merged ledger
+  lists each advance/payment and Remaining hits 0 → "Cleared".
+
+### Follow-ups
+- Per-worker monthly **export** (PDF/CSV of the sheet + ledger) and a bulk "pay all" — future.
+- Cross-month running balance (carry-forward) — deliberately not built.
+
 ## Post-MVP — Responsive design pass (mobile 320px → desktop) ✅ (2026-06-23)
 
 App-wide responsive audit + fixes after the owner reported "many responsiveness issues."
