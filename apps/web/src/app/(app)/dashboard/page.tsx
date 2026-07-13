@@ -21,6 +21,7 @@ import {
   ClipboardList,
   FileText,
   type LucideIcon,
+  MapPin,
   Receipt,
   ShoppingCart,
   Users,
@@ -145,6 +146,7 @@ export default function DashboardPage() {
     year: "numeric",
   });
   const actions = QUICK_ACTIONS.filter((a) => can(a.module, a.action));
+  const isOwnerWithNoSite = (user?.isAppOwner ?? false) && !activeSite;
 
   return (
     <div className="space-y-7">
@@ -164,6 +166,29 @@ export default function DashboardPage() {
         <ApiStatus />
       </header>
 
+      {/* ── No site yet — nudge the owner to create one ───────── */}
+      {isOwnerWithNoSite ? (
+        <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border py-16 text-center">
+          <div className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <MapPin className="size-5" />
+          </div>
+          <div>
+            <p className="text-base font-semibold">No site yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Create your first site to start tracking work, attendance, and expenses.
+            </p>
+          </div>
+          <Link
+            href="/sites"
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            Go to Sites
+          </Link>
+        </div>
+      ) : null}
+
+      {/* ── Dashboard widgets (hidden until a site exists) ──────── */}
+      {!isOwnerWithNoSite && (<>
       {/* ── Today at a glance ──────────────────────────────────── */}
       <section>
         <SectionLabel>Today at a glance</SectionLabel>
@@ -195,6 +220,7 @@ export default function DashboardPage() {
           <QuickActionsPanel actions={actions} />
         </div>
       </section>
+      </>)}
     </div>
   );
 }

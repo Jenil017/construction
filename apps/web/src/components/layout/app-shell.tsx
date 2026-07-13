@@ -24,9 +24,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { can, user, activeSite } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const mainItems = NAV_ITEMS.filter((i) => can(i.module, i.action));
+  const isOwner = user?.isAppOwner ?? false;
+  const mainItems = NAV_ITEMS.filter((i) => isOwner || can(i.module, i.action));
   const settingsItems = SETTINGS_ITEMS.filter(
-    (i) => (!i.ownerOnly || user?.isAppOwner) && can(i.module, i.action),
+    (i) => (!i.ownerOnly || isOwner) && (isOwner || can(i.module, i.action)),
   );
 
   // Close the drawer when the route changes (pathname is the intended trigger).
@@ -132,7 +133,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
           <div className="mx-auto w-full max-w-[1400px] animate-rise-in">
-            {activeSite ? (
+            {activeSite || isOwner ? (
               children
             ) : (
               <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center text-muted-foreground">
