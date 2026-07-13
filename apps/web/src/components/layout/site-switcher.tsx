@@ -22,22 +22,25 @@ export function SiteSwitcher() {
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  if (!user || !activeSite) return null;
+  if (!user) return null;
   const sites = user.sites;
   const multi = sites.length > 1;
+  const canSwitch = sites.length > 0;
 
   return (
     <div className="relative" ref={ref}>
       <button
         type="button"
-        onClick={() => multi && setOpen((o) => !o)}
-        aria-haspopup={multi}
+        onClick={() => canSwitch && setOpen((o) => !o)}
+        aria-haspopup={canSwitch}
         aria-expanded={open}
         className="flex min-h-10 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-hover disabled:cursor-default disabled:hover:bg-transparent"
-        disabled={!multi}
+        disabled={!canSwitch}
       >
         <MapPin className="size-4 shrink-0 text-sidebar-muted" />
-        <span className="max-w-[30vw] truncate font-medium sm:max-w-[9rem]">{activeSite.name}</span>
+        <span className="max-w-[30vw] truncate font-medium sm:max-w-[9rem]">
+          {activeSite ? activeSite.name : "No site selected"}
+        </span>
         {multi ? <ChevronsUpDown className="size-4 text-sidebar-muted" /> : null}
       </button>
 
@@ -62,7 +65,7 @@ export function SiteSwitcher() {
                   {site.role}
                 </span>
               </span>
-              {site.id === activeSite.id ? <Check className="size-4 text-primary" /> : null}
+              {site.id === activeSite?.id ? <Check className="size-4 text-primary" /> : null}
             </button>
           ))}
         </div>

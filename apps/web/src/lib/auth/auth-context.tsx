@@ -50,6 +50,8 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   switchSite: (siteId: string) => void;
+  /** Re-fetch /auth/me and re-apply the session (e.g. after creating a site). */
+  refreshSession: () => Promise<void>;
   /** Permission gate for the active site (backend still enforces). */
   can: (module: RbacModule, action: RbacAction) => boolean;
 }
@@ -135,6 +137,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryClient.clear();
   }, [queryClient]);
 
+  const refreshSession = useCallback(async () => {
+    const u = await apiFetch<AuthUser>("/auth/me");
+    applySession(u);
+  }, [applySession]);
+
   const switchSite = useCallback(
     (siteId: string) => {
       const site = user?.sites.find((s) => s.id === siteId);
@@ -157,8 +164,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, activeSite, isLoading, login, logout, switchSite, can }),
-    [user, activeSite, isLoading, login, logout, switchSite, can],
+    () => ({ user, activeSite, isLoading, login, logout, switchSite, refreshSession, can }),
+    [user, activeSite, isLoading, login, logout, switchSite, refreshSession, can],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

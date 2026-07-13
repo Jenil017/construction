@@ -1,6 +1,7 @@
 "use client";
 
 import { apiFetch } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth/auth-context";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export type SiteStatus = "active" | "inactive" | "completed";
@@ -57,10 +58,14 @@ export function useSites(params: SiteListParams = {}) {
 
 export function useCreateSite() {
   const qc = useQueryClient();
+  const { refreshSession } = useAuth();
   return useMutation({
     mutationFn: (body: CreateSiteInput) =>
       apiFetch<SiteRow>("/sites", { method: "POST", body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: SITES_KEY }),
+    onSuccess: async () => {
+      await refreshSession(); // re-fetches /auth/me so the new site appears in the switcher
+      qc.invalidateQueries({ queryKey: SITES_KEY });
+    },
   });
 }
 
