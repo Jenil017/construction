@@ -159,7 +159,10 @@ export function useAttendance(params: AttendanceListParams = {}) {
   return useQuery({
     queryKey: [...KEY, "records", params],
     queryFn: () => {
-      const qs = new URLSearchParams({ pageSize: "200" });
+      // 350 fits a full 7-day window for a large crew (≤50 workers × 7 days) in one
+      // page — the dashboard aggregates the whole window client-side. Within the API's
+      // 500 cap. (Was 200, which exceeded the old 100 cap and 400'd → empty chart.)
+      const qs = new URLSearchParams({ pageSize: "350" });
       if (params.date) qs.set("date", params.date);
       if (params.dateFrom) qs.set("dateFrom", params.dateFrom);
       if (params.dateTo) qs.set("dateTo", params.dateTo);

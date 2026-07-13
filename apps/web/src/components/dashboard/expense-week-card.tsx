@@ -17,6 +17,11 @@ function getLast7() {
     return {
       date: d.toISOString().slice(0, 10),
       label: DAY_LABELS[d.getDay()] ?? "?",
+      tooltipLabel: d.toLocaleDateString("en-IN", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      }),
       isHighlight: i === 6,
     };
   });
@@ -89,7 +94,15 @@ export function ExpenseWeekCard() {
         </div>
 
         <div className="mt-4">
-          <MiniBarChart bars={bars} maxHeight={54} />
+          <MiniBarChart
+            bars={bars}
+            maxHeight={54}
+            formatValue={(v) =>
+              v === 0
+                ? "No expenses"
+                : `₹${Math.round(v).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`
+            }
+          />
         </div>
       </Card>
     </Link>

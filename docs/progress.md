@@ -2,6 +2,76 @@
 
 Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 
+## Dashboard — Today's Sales / Purchases KPIs, chart tooltips, attendance-chart fix ✅ (2026-07-05)
+
+The owner asked for **Today's Purchase amount** and **Today's Sell amount** KPIs on the dashboard,
+data-on-hover for the trend charts, and flagged that the attendance chart was empty.
+
+### Delivered
+- **Two new "Today at a glance" KPI tiles**: `TodaySalesCard`
+  (`apps/web/src/components/selling/today-sales-card.tsx`) and `TodayPurchasesCard`
+  (`.../purchases/today-purchases-card.tsx`). Each sums today's rows (sales `totalAmount` /
+  purchases `total`, excluding cancelled) via the existing `useSales` / `usePurchases` hooks and
+  renders a `StatCard`. The glance grid went from 4 → **6 tiles** (`lg:grid-cols-3`), ordered
+  Attendance · Sales · Purchases · Expenses · DPR pending · Pending payments.
+- **Attendance chart empty — root cause fixed.** The dashboard's `useAttendance` requested
+  `pageSize=200`, but `paginationQuerySchema.pageSize` was capped at `.max(100)` → the request
+  **failed validation and returned nothing**. Raised the shared cap to **`.max(500)`** (default
+  stays 20; nothing else fetches large pages) and set the attendance fetch to `pageSize=350` so a
+  full 7-day window (workers × 7 days) loads in one page. Verified live: 270 rows now return; 6
+  non-zero day bars render.
+- **Hover tooltips on both trend charts.** `MiniBarChart` now takes `formatValue` +
+  per-bar `tooltipLabel` and shows a floating tooltip (full date + value, e.g.
+  "Fri, 4 Jul — ₹5,850" / "Mon, 30 Jun — 40.5 present") on hover.
+- **DPR list table**: removed the `w-full` on the short **Category** column (it caused a large empty
+  gap), added a flexible truncated **Work summary** column, a camera-icon photo count, and an inline
+  lock badge.
+- **Seed**: forced the first 4 purchases + first 5 sales onto today so the two new KPIs show a real
+  sum in the demo (verified live: Today's Purchases ₹1,03,385 / Today's Sales ₹6,741).
+
+### Verification
+- `pnpm typecheck` clean across web, api, shared · Biome clean on all touched files.
+- Both KPIs and the attendance fix confirmed against the running local API with the owner token.
+
+## Tooling — One-month demo seed with real DPR photos + invoices ✅ (2026-07-05)
+
+The owner asked to seed the **last one month** of data across **all modules, including DPR images**.
+Reworked the existing `packages/db/src/demo-seed.ts` (dev-only showcase seed, `pnpm --filter
+@construction-erp/db seed:demo`) rather than adding a second script.
+
+### Delivered
+- **Wipe-then-reseed** the target site ("Vesu", the owner's first site) — the seed now hard-deletes
+  that site's business rows (children before parents) and reseeds a clean set, so re-running never
+  piles up duplicates. Auth/sites/users are never touched.
+- **30-day window**: every dated record (DPR, attendance, purchases, expenses, sales, invoices,
+  advances, payments, opening-stock movements) falls in the last 30 days; attendance spans that
+  window's working days (Sundays off).
+- **Real DPR photos**: a dependency-free PNG encoder (`node:zlib` + hand-rolled CRC32/chunks)
+  generates a small coloured "site photo" per photo, uploaded directly to **R2** at the app's exact
+  `dpr/<siteId>/<dprId>/<uuid>.png` key, then a `dpr_photos` metadata row is inserted — so the images
+  actually display via the DPR detail endpoint's presigned GET URL. R2 account/bucket are read from
+  `apps/api/wrangler.jsonc` and the S3 keys from `apps/api/.dev.vars` (no secrets duplicated into
+  `packages/db`). If R2 is unreachable, everything else still seeds and photo bytes are skipped.
+- **Invoices** added to the seed (were previously missing): a mix of GST **tax invoices**
+  (CGST/SGST intra vs IGST inter, HSN codes, round-off) and non-GST **bills**, with `invoice_items`
+  and a gapless per-type/FY sequence.
+- Added `aws4fetch` as a dev dependency of `packages/db` for R2 signing.
+
+### Verification
+- `pnpm --filter @construction-erp/db typecheck` ✅, Biome ✅.
+- Ran the seed against Vesu: all 16 tables populated (45 workers, 22 materials, 26 purchases,
+  110 expenses, 25 DPRs + **55/55 photos uploaded**, 50 sales, 14 invoices [8 tax + 6 bill],
+  1125 attendance, 18 advances, 18 salary payments).
+- **Photo GET verified**: signed a presigned GET for a seeded photo key → HTTP 200, valid PNG bytes,
+  confirming images will render in the app. DPR date range came back 2026-06-06 → 2026-07-04.
+- Confirmed the wrangler-authenticated account matches `R2_ACCOUNT_ID` and the bucket `construction`
+  exists — no account change was needed.
+
+### Follow-ups
+- Placeholder photos are solid-colour PNGs (not real site imagery); swap for actual JPEGs if a more
+  realistic gallery is wanted.
+- Seed only targets the primary site ("Vesu"); parameterize by site name/env if other sites need data.
+
 ## Post-MVP — Professional invoice PDF redesign ✅ (2026-06-26)
 
 The owner asked for the invoice PDF to look like a real GST / non-GST invoice. Rebuilt the

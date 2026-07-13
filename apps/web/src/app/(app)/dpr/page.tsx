@@ -196,9 +196,10 @@ export default function DprPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
-                    <TableHead className="w-full">Category</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="w-full">Work summary</TableHead>
                     <TableHead>Location</TableHead>
-                    <TableHead>Photos</TableHead>
+                    <TableHead className="text-center">Photos</TableHead>
                     <TableHead>Created by</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -210,15 +211,34 @@ export default function DprPage() {
                       className="cursor-pointer"
                       onClick={() => setDetailId(dpr.id)}
                     >
-                      <TableCell className="font-medium">{dpr.reportDate}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {dpr.workCategory ?? "—"}
+                      <TableCell className="whitespace-nowrap font-medium">
+                        {dpr.reportDate}
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{dpr.location ?? "—"}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {dpr.photoCount > 0 ? dpr.photoCount : "—"}
+                      <TableCell className="whitespace-nowrap">
+                        <span className="inline-flex items-center gap-2">
+                          <span className="font-medium">{dpr.workCategory ?? "—"}</span>
+                          {dpr.status === "approved" ? (
+                            <Lock className="size-3.5 shrink-0 text-muted-foreground" />
+                          ) : null}
+                        </span>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">
+                      <TableCell className="max-w-xs text-muted-foreground">
+                        <span className="block truncate">{dpr.completedWork ?? "—"}</span>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">
+                        {dpr.location ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-center text-muted-foreground">
+                        {dpr.photoCount > 0 ? (
+                          <span className="inline-flex items-center gap-1">
+                            <Camera className="size-3.5" />
+                            {dpr.photoCount}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">
                         {dpr.createdBy?.name ?? "—"}
                       </TableCell>
                       <TableCell className="text-right">

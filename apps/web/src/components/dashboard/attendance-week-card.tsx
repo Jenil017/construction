@@ -18,6 +18,12 @@ function getLast7() {
     return {
       date: d.toISOString().slice(0, 10),
       label: DAY_LABELS[d.getDay()] ?? "?",
+      // Fuller label for the hover tooltip, e.g. "Mon, 30 Jun".
+      tooltipLabel: d.toLocaleDateString("en-IN", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      }),
       isHighlight: i === 6,
     };
   });
@@ -101,7 +107,13 @@ export function AttendanceWeekCard() {
         )}
 
         <div className="mt-3">
-          <MiniBarChart bars={bars} maxHeight={50} />
+          <MiniBarChart
+            bars={bars}
+            maxHeight={50}
+            formatValue={(v) =>
+              v === 0 ? "None present" : `${v % 1 === 0 ? v : v.toFixed(1)} present`
+            }
+          />
         </div>
       </Card>
     </Link>

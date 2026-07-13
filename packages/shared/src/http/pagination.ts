@@ -8,7 +8,10 @@ import { z } from "zod";
  */
 export const paginationQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  // Max 500 (up from 100): most lists page at ≤100, but dashboard widgets aggregate a
+  // full window client-side (e.g. attendance = workers × 7 days) and must fetch it in
+  // one request. The default stays 20, so nothing fetches large pages unless it asks.
+  pageSize: z.coerce.number().int().min(1).max(500).default(20),
   sortBy: z.string().min(1).optional(),
   sortOrder: z.enum(["asc", "desc"]).default("desc"),
 });

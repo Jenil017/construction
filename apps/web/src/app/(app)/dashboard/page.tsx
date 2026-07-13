@@ -8,6 +8,8 @@ import { LowStockPanel } from "@/components/dashboard/low-stock-panel";
 import { RecentDprPanel } from "@/components/dashboard/recent-dpr-panel";
 import { TodayExpensesCard } from "@/components/expenses/today-expenses-card";
 import { PendingPaymentsCard } from "@/components/purchases/pending-payments-card";
+import { TodayPurchasesCard } from "@/components/purchases/today-purchases-card";
+import { TodaySalesCard } from "@/components/selling/today-sales-card";
 import { Card } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
 import { useAuth } from "@/lib/auth/auth-context";
@@ -165,8 +167,10 @@ export default function DashboardPage() {
       {/* ── Today at a glance ──────────────────────────────────── */}
       <section>
         <SectionLabel>Today at a glance</SectionLabel>
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
           <TodayAttendanceCard />
+          <TodaySalesCard />
+          <TodayPurchasesCard />
           <TodayExpensesCard />
           <DprPendingCard />
           <PendingPaymentsCard />
