@@ -1,4 +1,5 @@
-import { index, pgTable, text, uuid, varchar } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { index, pgTable, text, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 import { primaryId, softDelete, timestamps } from "./_shared";
 import { users } from "./users";
 
@@ -7,7 +8,8 @@ import { users } from "./users";
  * DPR, attendance, inventory, expenses, purchases, salary, reports) attaches to a
  * site, and every query must filter by `siteId`. The `ownerUserId` is the user who
  * created the site; the owner has implicit full access to it (see common/rbac).
- * `code` is an optional human reference, globally unique when set.
+ * `code` is an optional human reference, unique per owner when set — two
+ * different owners may each use "VESU" without colliding.
  */
 export const sites = pgTable(
   "sites",
@@ -17,7 +19,7 @@ export const sites = pgTable(
       .notNull()
       .references(() => users.id),
     name: text("name").notNull(),
-    code: varchar("code", { length: 40 }).unique(),
+    code: varchar("code", { length: 40 }),
     address: text("address"),
     city: varchar("city", { length: 120 }),
     state: varchar("state", { length: 120 }),
@@ -37,6 +39,11 @@ export const sites = pgTable(
   (table) => [
     index("sites_owner_idx").on(table.ownerUserId),
     index("sites_status_idx").on(table.status),
+    // Codes are scoped to the owner, not global — two contractors may both use
+    // "VESU". Partial so an owner can keep many sites with no code at all.
+    uniqueIndex("sites_owner_code_uq")
+      .on(table.ownerUserId, table.code)
+      .where(sql`${table.code} is not null`),
   ],
 );
 

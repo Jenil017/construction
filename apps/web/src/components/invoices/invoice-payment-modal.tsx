@@ -8,8 +8,13 @@ import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import { ApiError } from "@/lib/api-client";
 import { type Invoice, useRecordInvoicePayment } from "@/lib/hooks/use-invoices";
+import { formMoney } from "@/lib/validation/forms";
+import { PAYMENT_MODES } from "@construction-erp/shared";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Banknote } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 interface InvoicePaymentModalProps {
   open: boolean;
@@ -17,58 +22,86 @@ interface InvoicePaymentModalProps {
   invoice: Invoice | null;
 }
 
-const PAYMENT_MODES = ["Cash", "UPI", "Bank transfer", "Cheque"];
+/**
+ * The amount ceiling depends on the invoice, so the schema is built per-render
+ * from the outstanding balance — the API enforces the same cap, this just
+ * surfaces it inline instead of after a round-trip.
+ */
+function buildSchema(outstanding: number) {
+  return z.object({
+    amount: formMoney({ allowZero: false }).superRefine((n, ctx) => {
+      // Tolerance covers float noise on a balance derived by subtraction.
+      if (n > outstanding + 0.001) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `That's more than the balance. Enter up to ${formatINR(outstanding)}.`,
+        });
+      }
+    }),
+    paymentMode: z.enum(PAYMENT_MODES).nullable(),
+  });
+}
+
+type PaymentFormValues = z.input<ReturnType<typeof buildSchema>>;
 
 export function InvoicePaymentModal({ open, onClose, invoice }: InvoicePaymentModalProps) {
   const recordPayment = useRecordInvoicePayment();
-  const [amount, setAmount] = useState("");
-  const [paymentMode, setPaymentMode] = useState("Cash");
   const [error, setError] = useState<string | null>(null);
 
   const total = invoice?.grandTotal ?? 0;
   const alreadyReceived = invoice?.amountReceived ?? 0;
   const outstanding = Math.max(0, total - alreadyReceived);
 
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setValue,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<PaymentFormValues>({
+    resolver: zodResolver(buildSchema(outstanding)),
+    defaultValues: { amount: "", paymentMode: "Cash" },
+  });
+
   useEffect(() => {
     if (!open || !invoice) return;
     setError(null);
     const remaining = Math.max(0, invoice.grandTotal - invoice.amountReceived);
-    setAmount(remaining > 0 ? String(remaining) : "");
-    setPaymentMode(invoice.paymentMode ?? "Cash");
-  }, [open, invoice]);
+    reset({
+      amount: remaining > 0 ? String(remaining) : "",
+      paymentMode: (invoice.paymentMode as PaymentFormValues["paymentMode"]) ?? "Cash",
+    });
+  }, [open, invoice, reset]);
 
+  const amount = watch("amount");
   const addNum = Number(amount);
   const addValid = amount !== "" && !Number.isNaN(addNum) && addNum > 0;
-  const newReceived = useMemo(
-    () => Math.min(total, alreadyReceived + (addValid ? addNum : 0)),
-    [addNum, addValid, alreadyReceived, total],
-  );
+  const newReceived = Math.min(total, alreadyReceived + (addValid ? addNum : 0));
   const newOutstanding = Math.max(0, total - newReceived);
 
-  const submit = async () => {
+  const onSubmit = handleSubmit(async (raw) => {
     if (!invoice) return;
     setError(null);
-    if (!addValid) {
-      setError("Enter the amount received now (greater than zero).");
-      return;
-    }
-    if (addNum > outstanding + 0.001) {
-      setError(`That's more than the balance. Enter up to ${formatINR(outstanding)}.`);
-      return;
-    }
+    const values = raw as unknown as { amount: number; paymentMode: string | null };
     // The endpoint stores the cumulative amount received.
-    const cumulative = Math.min(total, alreadyReceived + addNum);
+    const cumulative = Math.min(total, alreadyReceived + values.amount);
     try {
-      await recordPayment.mutateAsync({ id: invoice.id, amountReceived: cumulative, paymentMode });
+      await recordPayment.mutateAsync({
+        id: invoice.id,
+        amountReceived: cumulative,
+        paymentMode: values.paymentMode,
+      });
       onClose();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not record payment.");
     }
-  };
+  });
 
   if (!invoice) return null;
 
   const fullyPaid = outstanding <= 0;
+  const busy = isSubmitting || recordPayment.isPending;
 
   return (
     <Modal
@@ -79,16 +112,16 @@ export function InvoicePaymentModal({ open, onClose, invoice }: InvoicePaymentMo
       description={invoice.invoiceNumber}
       footer={
         <>
-          <Button variant="outline" onClick={onClose} disabled={recordPayment.isPending}>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={recordPayment.isPending || fullyPaid}>
-            {recordPayment.isPending ? "Saving…" : "Record payment"}
+          <Button onClick={onSubmit} disabled={busy || fullyPaid}>
+            {busy ? "Saving…" : "Record payment"}
           </Button>
         </>
       }
     >
-      <div className="space-y-4">
+      <form onSubmit={onSubmit} className="space-y-4" noValidate>
         <StatTiles
           items={[
             { label: "Grand total", value: formatINR(total) },
@@ -107,33 +140,34 @@ export function InvoicePaymentModal({ open, onClose, invoice }: InvoicePaymentMo
           </div>
         ) : (
           <>
-            <Field label="Amount received now (₹)" htmlFor="inv-pay-amount" required>
+            <Field
+              label="Amount received now (₹)"
+              htmlFor="inv-pay-amount"
+              required
+              error={errors.amount?.message}
+            >
               <Input
                 id="inv-pay-amount"
                 type="number"
+                inputMode="decimal"
                 min="0"
                 max={outstanding}
                 step="any"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
                 placeholder={`Up to ${formatINR(outstanding)}`}
                 autoFocus
+                {...register("amount")}
               />
               <button
                 type="button"
-                onClick={() => setAmount(String(outstanding))}
+                onClick={() => setValue("amount", String(outstanding), { shouldValidate: true })}
                 className="mt-1.5 text-xs font-medium text-primary hover:underline"
               >
                 Pay full balance ({formatINR(outstanding)})
               </button>
             </Field>
 
-            <Field label="Payment mode" htmlFor="inv-pay-mode">
-              <Select
-                id="inv-pay-mode"
-                value={paymentMode}
-                onChange={(e) => setPaymentMode(e.target.value)}
-              >
+            <Field label="Payment mode" htmlFor="inv-pay-mode" error={errors.paymentMode?.message}>
+              <Select id="inv-pay-mode" {...register("paymentMode")}>
                 {PAYMENT_MODES.map((m) => (
                   <option key={m} value={m}>
                     {m}
@@ -164,7 +198,7 @@ export function InvoicePaymentModal({ open, onClose, invoice }: InvoicePaymentMo
             {error}
           </div>
         ) : null}
-      </div>
+      </form>
     </Modal>
   );
 }

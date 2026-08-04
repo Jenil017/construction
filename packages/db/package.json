@@ -17,7 +17,8 @@
     "studio": "drizzle-kit studio",
     "seed": "tsx src/seed.ts",
     "seed:demo": "tsx src/demo-seed.ts",
-    "seed:provision-demo": "tsx src/provision-demo.ts"
+    "seed:provision-demo": "tsx src/provision-demo.ts",
+    "check:isolation": "tsx src/check-tenant-isolation.ts"
   },
   "dependencies": {
     "@construction-erp/shared": "workspace:*",

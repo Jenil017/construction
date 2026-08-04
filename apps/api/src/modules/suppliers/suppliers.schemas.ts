@@ -1,5 +1,12 @@
-import { paginationQuerySchema } from "@construction-erp/shared";
+import { paginationQuerySchema, searchSchema } from "@construction-erp/shared";
 import { z } from "@hono/zod-openapi";
+import {
+  nullableEmail,
+  nullableGstin,
+  nullablePhone,
+  nullableText,
+  requiredText,
+} from "../../common/validation";
 
 export const supplierIdParamSchema = z.object({
   id: z
@@ -32,24 +39,24 @@ export const supplierDetailSchema = supplierSchema
   .openapi("SupplierDetail");
 
 const supplierFields = {
-  contactPerson: z.string().max(120).nullable().optional(),
-  phone: z.string().max(20).nullable().optional(),
-  email: z.string().max(160).nullable().optional(),
-  gstin: z.string().max(20).nullable().optional(),
-  address: z.string().max(2000).nullable().optional(),
-  notes: z.string().max(2000).nullable().optional(),
+  contactPerson: nullableText(120),
+  phone: nullablePhone,
+  email: nullableEmail,
+  gstin: nullableGstin,
+  address: nullableText(2000),
+  notes: nullableText(2000),
 };
 
 export const createSupplierBodySchema = z
-  .object({ name: z.string().min(1).max(160), ...supplierFields })
+  .object({ name: requiredText(160), ...supplierFields })
   .openapi("CreateSupplierRequest");
 
 export const updateSupplierBodySchema = z
-  .object({ name: z.string().min(1).max(160).optional(), ...supplierFields })
+  .object({ name: requiredText(160).optional(), ...supplierFields })
   .openapi("UpdateSupplierRequest");
 
 export const listSuppliersQuerySchema = paginationQuerySchema.extend({
-  search: z.string().optional().openapi({ description: "Match name, contact, phone, or GSTIN." }),
+  search: searchSchema.openapi({ description: "Match name, contact, phone, or GSTIN." }),
 });
 
 export const deleteSupplierResultSchema = z

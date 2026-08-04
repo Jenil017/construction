@@ -34,7 +34,7 @@ export function SiteSwitcher() {
         onClick={() => canSwitch && setOpen((o) => !o)}
         aria-haspopup={canSwitch}
         aria-expanded={open}
-        className="flex min-h-10 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-hover disabled:cursor-default disabled:hover:bg-transparent"
+        className="flex min-h-11 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-hover disabled:cursor-default disabled:hover:bg-transparent sm:min-h-10"
         disabled={!canSwitch}
       >
         <MapPin className="size-4 shrink-0 text-sidebar-muted" />

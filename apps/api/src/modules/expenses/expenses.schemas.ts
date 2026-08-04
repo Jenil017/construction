@@ -1,8 +1,16 @@
-import { paginationQuerySchema } from "@construction-erp/shared";
+import {
+  dateSchema,
+  moneySchema,
+  optionalPaymentModeSchema,
+  optionalText,
+  paginationQuerySchema,
+  pastOrTodaySchema,
+  searchSchema,
+} from "@construction-erp/shared";
 import { z } from "@hono/zod-openapi";
+import { nullableText, requiredText } from "../../common/validation";
 
 export const EXPENSE_STATUSES = ["pending", "approved", "rejected"] as const;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const personSchema = z.object({ id: z.string().uuid(), name: z.string() });
 
@@ -31,36 +39,41 @@ export const expenseSchema = z
   })
   .openapi("Expense");
 
-export const listExpensesQuerySchema = paginationQuerySchema.extend({
-  search: z.string().optional().openapi({ description: "Match description, paidTo, or category." }),
-  category: z.string().optional(),
-  status: z.enum(EXPENSE_STATUSES).optional(),
-  pettyCash: z.enum(["true", "false"]).optional(),
-  dateFrom: z.string().regex(DATE_RE).optional(),
-  dateTo: z.string().regex(DATE_RE).optional(),
-});
+export const listExpensesQuerySchema = paginationQuerySchema
+  .extend({
+    search: searchSchema.openapi({ description: "Match description, paidTo, or category." }),
+    category: optionalText(80),
+    status: z.enum(EXPENSE_STATUSES).optional(),
+    pettyCash: z.enum(["true", "false"]).optional(),
+    dateFrom: dateSchema.optional(),
+    dateTo: dateSchema.optional(),
+  })
+  .refine((q) => !q.dateFrom || !q.dateTo || q.dateFrom <= q.dateTo, {
+    message: "The start date must be before the end date.",
+    path: ["dateTo"],
+  });
 
 const expenseFields = {
-  description: z.string().max(300).nullable().optional(),
-  paidTo: z.string().max(160).nullable().optional(),
-  paymentMode: z.string().max(40).nullable().optional(),
+  description: nullableText(300),
+  paidTo: nullableText(160),
+  paymentMode: optionalPaymentModeSchema.nullable(),
   isPettyCash: z.boolean().optional(),
 };
 
 export const createExpenseBodySchema = z
   .object({
-    expenseDate: z.string().regex(DATE_RE).optional(),
-    category: z.string().min(1).max(80),
-    amount: z.number().positive(),
+    expenseDate: pastOrTodaySchema.optional(),
+    category: requiredText(80),
+    amount: moneySchema({ allowZero: false }),
     ...expenseFields,
   })
   .openapi("CreateExpenseRequest");
 
 export const updateExpenseBodySchema = z
   .object({
-    expenseDate: z.string().regex(DATE_RE).optional(),
-    category: z.string().min(1).max(80).optional(),
-    amount: z.number().positive().optional(),
+    expenseDate: pastOrTodaySchema.optional(),
+    category: requiredText(80).optional(),
+    amount: moneySchema({ allowZero: false }).optional(),
     ...expenseFields,
   })
   .openapi("UpdateExpenseRequest");

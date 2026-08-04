@@ -28,6 +28,9 @@ interface SiteRow {
   city: string | null;
   state: string | null;
   status: string;
+  gstin: string | null;
+  legalName: string | null;
+  stateCode: string | null;
   createdAt: Date;
 }
 
@@ -39,6 +42,9 @@ const siteColumns = {
   city: sites.city,
   state: sites.state,
   status: sites.status,
+  gstin: sites.gstin,
+  legalName: sites.legalName,
+  stateCode: sites.stateCode,
   createdAt: sites.createdAt,
 };
 
@@ -51,6 +57,9 @@ function serializeSite(row: SiteRow, memberCount: number, role: "owner" | "membe
     city: row.city,
     state: row.state,
     status: row.status,
+    gstin: row.gstin,
+    legalName: row.legalName,
+    stateCode: row.stateCode,
     role,
     memberCount,
     createdAt: row.createdAt.toISOString(),
@@ -84,15 +93,24 @@ async function loadOwnedSite(db: DbClient, id: string, userId: string) {
   return site;
 }
 
-/** Throw if a site with this code already exists (codes are globally unique). */
-async function assertCodeAvailable(db: DbClient, code: string, excludeId?: string): Promise<void> {
+/**
+ * Throw if this owner already uses the code. Codes are unique per owner, not
+ * globally — another contractor's "VESU" must not block this one (and must not
+ * be discoverable through a 409 either).
+ */
+async function assertCodeAvailable(
+  db: DbClient,
+  ownerUserId: string,
+  code: string,
+  excludeId?: string,
+): Promise<void> {
   const [existing] = await db
     .select({ id: sites.id })
     .from(sites)
-    .where(and(eq(sites.code, code), isNull(sites.deletedAt)))
+    .where(and(eq(sites.ownerUserId, ownerUserId), eq(sites.code, code), isNull(sites.deletedAt)))
     .limit(1);
   if (existing && existing.id !== excludeId) {
-    throw new ConflictError("A site with this code already exists.");
+    throw new ConflictError("You already have a site with this code.");
   }
 }
 
@@ -198,7 +216,7 @@ siteRoutes.openapi(createSiteRoute, async (c) => {
   const meta = getRequestMeta(c);
   const code = body.code?.trim() || null;
 
-  if (code) await assertCodeAvailable(db, code);
+  if (code) await assertCodeAvailable(db, auth.userId, code);
 
   const created = await db.transaction(async (tx) => {
     const [site] = await tx
@@ -211,6 +229,11 @@ siteRoutes.openapi(createSiteRoute, async (c) => {
         city: body.city ?? null,
         state: body.state ?? null,
         status: body.status ?? "active",
+        // Seller identity for invoicing. `stateCode` is what lets the invoice
+        // module decide IGST vs CGST+SGST — without it every invoice is intra-state.
+        gstin: body.gstin ?? null,
+        legalName: body.legalName ?? null,
+        stateCode: body.stateCode ?? null,
       })
       .returning();
     if (!site) throw new ConflictError("Could not create the site. Please try again.");
@@ -307,9 +330,12 @@ siteRoutes.openapi(updateSiteRoute, async (c) => {
   if (body.city !== undefined) updates.city = body.city;
   if (body.state !== undefined) updates.state = body.state;
   if (body.status !== undefined) updates.status = body.status;
+  if (body.gstin !== undefined) updates.gstin = body.gstin;
+  if (body.legalName !== undefined) updates.legalName = body.legalName;
+  if (body.stateCode !== undefined) updates.stateCode = body.stateCode;
   if (body.code !== undefined) {
     const code = body.code?.trim() || null;
-    if (code) await assertCodeAvailable(db, code, id);
+    if (code) await assertCodeAvailable(db, existing.ownerUserId, code, id);
     updates.code = code;
   }
 

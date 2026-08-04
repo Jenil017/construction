@@ -59,6 +59,7 @@ export const requireAuth = createMiddleware<Env>(async (c, next) => {
     name: user.name,
     isOwner,
     isAppOwner: user.isOwner,
+    isPlatformAdmin: user.isPlatformAdmin,
     permissions,
   });
 

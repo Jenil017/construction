@@ -19,7 +19,7 @@ import {
 } from "drizzle-orm";
 import { writeAudit } from "../../common/audit";
 import { type DbClient, getDb } from "../../common/db";
-import { ConflictError, NotFoundError } from "../../common/errors";
+import { ConflictError, NotFoundError, ValidationError } from "../../common/errors";
 import { getRequestMeta } from "../../common/http/request-meta";
 import { idempotency } from "../../common/idempotency";
 import { requireAuth } from "../../common/middleware/require-auth";
@@ -159,6 +159,21 @@ function derivePaymentStatus(total: number, received: number): "unpaid" | "parti
   if (received <= 0) return "unpaid";
   if (received >= total) return "paid";
   return "partial";
+}
+
+/**
+ * Money received can never exceed the invoice it settles. Without this the
+ * receivables ledger is fiction — ₹10,00,000 posted against a ₹5,000 invoice was
+ * accepted and marked "paid". Applied on create, update, and record-payment
+ * alike, because all three write `amount_received`.
+ */
+function assertReceivedWithinTotal(received: number, grandTotal: number): number {
+  if (received > grandTotal) {
+    throw new ValidationError("The amount received cannot exceed the invoice total.", {
+      fields: { amountReceived: "Cannot exceed the invoice total." },
+    });
+  }
+  return received;
 }
 
 /** Postgres unique-violation (used to retry invoice-number assignment on a race). */
@@ -375,7 +390,10 @@ invoiceRoutes.openapi(createRouteDef, async (c) => {
     (invoiceType === "tax" ? body.buyerState?.trim() || seller.sellerState || null : null);
 
   const { lines, totals } = computeInvoice(toRawLines(body.items), { invoiceType, supplyType });
-  const amtReceived = round2(body.amountReceived ?? 0);
+  const amtReceived = assertReceivedWithinTotal(
+    round2(body.amountReceived ?? 0),
+    totals.grandTotal,
+  );
   const paymentStatus = derivePaymentStatus(totals.grandTotal, amtReceived);
 
   // Assign the next sequence number, retrying on a rare numbering race.
@@ -597,10 +615,12 @@ invoiceRoutes.openapi(updateRouteDef, async (c) => {
     (invoiceType === "tax" ? body.buyerState?.trim() || seller.sellerState || null : null);
 
   const { lines, totals } = computeInvoice(toRawLines(body.items), { invoiceType, supplyType });
-  const amtReceived =
+  const amtReceived = assertReceivedWithinTotal(
     body.amountReceived !== undefined
       ? round2(body.amountReceived)
-      : Number(existing.amountReceived);
+      : Number(existing.amountReceived),
+    totals.grandTotal,
+  );
   const paymentStatus = derivePaymentStatus(totals.grandTotal, amtReceived);
 
   await db.transaction(async (tx) => {
@@ -786,8 +806,9 @@ invoiceRoutes.openapi(paymentRouteDef, async (c) => {
   const existing = await loadRawInvoice(db, siteId, id);
   if (!existing) throw new NotFoundError("Invoice not found.");
 
-  const received = round2(amountReceived);
-  const newStatus = derivePaymentStatus(Number(existing.grandTotal), received);
+  const grandTotal = Number(existing.grandTotal);
+  const received = assertReceivedWithinTotal(round2(amountReceived), grandTotal);
+  const newStatus = derivePaymentStatus(grandTotal, received);
   const updates: Record<string, unknown> = {
     amountReceived: String(received),
     paymentStatus: newStatus,

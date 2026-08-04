@@ -2,6 +2,304 @@
 
 Living record of delivery progress against `docs/plan.md`. Newest phase on top.
 
+## Full browser sweep — every page, every form, every flow ✅ (2026-08-04)
+
+Black-box test of the whole app in real Chromium, driven like a user (click what's visible, type
+into labelled fields, judge by what appears). Run against a **production build** on a disposable
+`ZZ UI Test Site`, so nothing touched the owner's real data; the site was deleted afterwards.
+
+### Result: 40/40 checks pass — and the sweep found 3 real defects, now fixed
+
+**1. Six forms required a date the API treats as optional.** Clearing the date field gave
+"Use the date format YYYY-MM-DD" — misleading, since the field was empty, not misformatted, and
+the API defaults an omitted date to today. Added `pastOrTodayOrBlankSchema` to the shared module
+(blank → today) and applied it to DPR, expense, stock-movement, purchase, and sale forms.
+
+**2. Four API modules were missed by the earlier validation pass** and still used the raw
+`DATE_RE` shape check: **dpr, salary, reports** (and an uncapped `search` in **users**). Salary is
+the notable one — `advanceDate` and `paidDate` are money paths, and `2026-13-45` there was still a
+500. All four now use the shared schemas; `grep DATE_RE apps/api/src` returns nothing.
+
+**3. DPR create/update had no future-date guard** — a report could be filed for next decade. Now
+`pastOrTodaySchema`, matching every other "records what already happened" date.
+
+### What was verified in the browser
+- **13/13 pages** load with no crash, no failed API call, no console error.
+- **Create forms** (supplier, material, worker, expense, DPR, invoice): empty submit blocked,
+  garbage rejected with a message under the right field, valid input saves. The third check is the
+  one that matters — a form that rejects everything passes the first two and is still broken.
+- **Money guards through the UI**: invoice over-payment refused ("The amount received cannot exceed
+  the invoice total") and ₹500 then accepted; sale over stock refused ("Quantity exceeds available
+  stock (500 kg)") and 10 accepted.
+- **Edit flow**: form prefills, validation applies on edit as well as create, change reflects in the
+  list.
+- **Mobile (390px, touch)**: drawer opens/navigates/auto-closes, **zero horizontal overflow across
+  12 pages**, forms open as bottom sheets, controls ≥40px. The single sub-40px hit is the 16px
+  native checkbox inside a full-width tappable label — the documented accepted trade-off.
+
+### Verification
+`pnpm typecheck` · `pnpm check` · `pnpm build` clean. `scripts/check-validation.sh` re-run after the
+schema changes — **35/35**.
+
+### Note on `next dev`
+Three times during this work the dev server served 404s or `__webpack_modules__[moduleId] is not a
+function` for its own chunks after many edits, which makes the login form fall back to a native GET
+(putting the password in the URL). It is a stale `.next` cache, not a code defect — the production
+build is unaffected — but it looks alarming and points at the wrong place. `rm -rf apps/web/.next`
+and restart. The sweep above was run against `next start` for exactly this reason.
+
+## Validation — shared rules across both layers + money-integrity guards ✅ (2026-08-04)
+
+The owner asked for "proper validation everywhere" — phone digits, email format, lengths, positive
+and integer numbers. An audit of the existing state found the formatting gaps were real but not the
+worst of it: several **money-integrity defects were exploitable with curl today**. Scope agreed with
+the owner: formatting + money guards (not the wider GST tax rework), and convert all 13 web forms.
+
+### The shared module (the point of the whole change)
+`packages/shared/src/validation/primitives.ts` — one definition of each rule, imported by **both**
+the API and the web app. Previously neither shared anything: `DATE_RE` was copy-pasted in 7 files,
+and only the login page used zod at all. When each side rolls its own rule, the web either blocks
+what the server allows (bypassable with curl) or accepts what it rejects (a 400 the user can't act
+on). Contents: Indian mobile (10 digits, 6-9 start, normalising `+91 98250 12345` → `9825012345`),
+email, real-calendar dates, `pastOrTodaySchema`, GSTIN **structure**, GST state codes (01-38/97/99),
+HSN (4/6/8 digits), money/quantity with bounds, and a canonical `PAYMENT_MODES` vocabulary.
+
+**`.finite()` is the quiet but important one.** `z.number().positive()` *accepts* `Infinity`,
+`JSON.parse` turns `1e400` into `Infinity`, and `String(Infinity)` is `"Infinity"` — which Postgres
+accepts for a `numeric` column. One such value permanently poisons every later `Number()` sum on
+that row. Every money/quantity field now goes through a helper that rejects it.
+
+### Money-integrity defects fixed (the exploitable ones)
+- **Invoice over-payment.** `POST /invoices/{id}/payment` accepted ₹10,00,000 against a ₹5,000
+  invoice and marked it **paid**. Purchases had always guarded this; invoices and sales did not.
+  Now capped on all three write paths (create, update, record-payment) via one shared helper.
+- **Sale over-payment** — same defect, same fix. Also guards the edit path: lowering a sale's rate
+  below an already-recorded receipt is now refused instead of silently leaving it over-paid.
+- **Unbounded salary advances.** Deliberately **not** capped at the month's gross — advances are
+  normally paid mid-month before attendance is complete, so a strict cap would block the ordinary
+  case. Capped instead at a year of the worker's own wages, which catches the fat-finger and the
+  abuse (₹50,000 against a ₹700/day worker) while leaving arrears and settlements room.
+- **Invoice line discount > line value** was silently clamped to 0, so the printed invoice showed a
+  discount that had never been applied. Now rejected.
+- Stock adjustment `newStock`, previously unbounded, was the clean way to mint inventory and then
+  sell it. Now bounded.
+
+### Also fixed
+- **Site GSTIN/legalName/stateCode were unreachable** — the DB columns existed but the API never
+  exposed or wrote them, so `site.gstin` was always NULL, `resolveSupplyType` always returned
+  `"intra"`, and **every invoice used CGST+SGST — IGST was never produced**. Wrong tax heads on a
+  legal document for any inter-state sale. Raised with the owner and fixed: verified live that
+  Gujarat→Gujarat now yields CGST 90 + SGST 90 and Gujarat→Maharashtra yields IGST 180.
+- Real calendar dates (`2026-13-45` and `2026-02-31` were 500s, now 400s), future-date guards,
+  `dateFrom <= dateTo`, `dueDate >= invoiceDate`, search/sortBy caps (an unbounded `ILIKE` term is a
+  CPU-burn vector on a Worker), `.trim()` on names so `"   "` no longer saves, `.email()` on
+  supplier email, and a 200-item cap on the invoice line array.
+- **All 13 web form modals** converted to react-hook-form + zodResolver, sharing the same rules.
+  Errors now appear inline on the field via the existing `Field error=` prop instead of one red box.
+  Three forms keep local state where the form doesn't own it (invoice/purchase line arrays, the
+  permission grid) and validate at submit — a full `useFieldArray` rewrite would have been a much
+  larger diff for no extra validation.
+
+### Verification
+- `pnpm typecheck` · `pnpm check` (236 files) · `pnpm build` — all clean.
+- **`scripts/check-validation.sh` — 35/35 pass against the live API.** Every rule is asserted
+  twice: the bad value must be rejected *and* the good value must still be accepted, because a
+  guard that blocks everything is as broken as no guard at all.
+- Smoke-tested every create path afterwards (supplier, worker, material, expense, DPR, invoice,
+  purchase, site update) — all still 201/200, so nothing regressed.
+- **Black-box browser test (real Chromium, driven as a user with no knowledge of the code) —
+  8/8.** Typing `12345` / `not-an-email` / `ZZZZZZZZZZZZZZZ` into the supplier form produces three
+  separate messages under their own fields; a `2099` expense date and a `-500` amount likewise.
+  Correcting the values then saves. Screenshots confirmed the errors are visibly rendered, not
+  merely present in the DOM.
+- IGST verified live end-to-end: Gujarat→Gujarat = CGST 90 + SGST 90; Gujarat→Maharashtra = IGST 180.
+
+### A note on the dev server, not the code
+Twice during this work the running `next dev` served **404s for its own JS chunks** after many file
+edits, which makes the login form fall back to a native GET submit — putting the password in the
+URL query string. It is a stale `.next` cache, not a code defect (`rm -rf apps/web/.next` and
+restart fixes it), and the production build is unaffected. Worth knowing because the symptom looks
+alarming and points at the wrong place.
+
+### Follow-ups (deliberately out of the agreed scope)
+- **`reverseCharge` is accepted but ignored by the tax maths** (`invoices.service.ts`). Under RCM
+  the supplier must not charge tax; the flag prints on the PDF but the totals include GST.
+- No `.superRefine` requiring `sellerGstin` when `invoiceType === "tax"` — a GST invoice can still
+  be issued with no seller GSTIN.
+- Status/type columns still have no DB `CHECK` constraints; the API enum is the only guard.
+- `paymentMode` vocabulary is pinned to the **existing stored casing** ("Cash", "Bank transfer",
+  "UPI", "Cheque") rather than a tidier lowercase set, because changing it would reject an edit to
+  every existing record. Verified against all 5 tables before choosing. Matching is
+  case-insensitive on input.
+
+## No-site empty state — stop firing doomed requests ✅ (2026-08-04)
+
+Reported as a bug: `GET /inventory/materials`, `/dpr`, `/salary/monthly` all returning **400** on a
+freshly provisioned owner account. The API was correct — those are site-scoped endpoints and the
+account had no site, so `requireSiteContext` returned `400 "Select a site to continue."` A control
+request with a valid `X-Site-Id` returned 200. The bug was the **frontend**: it rendered module
+pages for a user with no active site, firing a page of requests that could only fail.
+
+### Delivered
+- **`NoSiteState`** (`components/layout/no-site-state.tsx`) — two messages for two different dead
+  ends: an owner gets "Create your first site" plus a **Go to Sites** CTA (they can fix it); a
+  member gets "No site assigned — ask your administrator" (they cannot). The copy names the module
+  the user was heading for ("…to start marking attendance") via a route→label map, so the page they
+  wanted is still acknowledged.
+- **Gated once in the app shell**, not in each of the 13 module pages. The previous condition
+  (`activeSite || isOwner`) let a *site-less owner* through — exactly the reported case. Now only
+  `SITELESS_ROUTES` (`/sites`, `/dashboard`) render without a site: `/sites` is where a site gets
+  created, and `/dashboard` has its own tailored nudge.
+
+### Verification
+- `pnpm typecheck` · `pnpm check` (234 files) · `pnpm build` — clean.
+- **Live Playwright check against a purpose-provisioned site-less owner**: all 6 module routes show
+  the message, none show the raw error, and **zero failed API calls** are made (previously one
+  400 per hook per page). The temporary account was deleted afterwards.
+- Worth noting for future runs: the first attempt "failed" because the test account had since been
+  given a site — the empty state correctly did not render. The check is only meaningful against an
+  account that genuinely has none.
+
+## Mobile responsiveness — live browser verification + touch-target fixes ✅ (2026-08-03)
+
+Full report: `docs/responsiveness-check-2026-08-03.md`. Ran a real Chromium session (Playwright,
+authenticated, populated site) resized through 8 breakpoints across 8 routes + 2 modals — **72
+measured viewports**. This is the verification the earlier same-day pass could not do.
+
+### Result
+- **Zero horizontal overflow at every route and every width** (320→2560). Nav transitions cleanly
+  at 768px; list cards→table at 768px; modal sheet→dialog at 640px. No text under 12px.
+- **Touch targets: 16–18 sub-44px per page before, 0–2 after.** Found by measuring live geometry,
+  not by reading source — the drawer nav links (250×36px, the primary mobile navigation) and the
+  shared `Filters` button (288×38px, on every list page) were the two biggest, and neither was
+  visible in the source review that preceded it.
+- Fixed: drawer nav links, `FilterDrawer` trigger, site switcher + user menu, attendance
+  Daysheet/Workers tabs, invoice type toggle, Users status chips, `Button size="sm"` (36→40px, used
+  for row actions), dashboard "Go to Sites" CTA, brand link, reverse-charge checkbox row.
+- Accepted and documented rather than fixed: 40px `size="sm"` buttons, the 16px native checkbox
+  inside a 44px `<label>`, and 16px inline text links in dashboard card headers.
+
+### Verification note
+A mid-run session expiry initially produced **false passes** — the 15-minute access token lapsed
+and three routes silently recorded the *login page* as "0 issues". The harness now asserts it is
+not on `/login` before measuring. On an authenticated app, a clean result is only trustworthy if
+the page actually loaded.
+
+## Mobile responsiveness — safe areas, `dvh`, touch targets, invoice line items ✅ (2026-08-03)
+
+Full-app responsive pass (`/impeccable adapt`). **Starting point was already strong**: the app had a
+working mobile drawer, a `<ul md:hidden>` card fallback on all 13 list pages, the `h-11 sm:h-10`
+touch-target ladder in `Button`, and a bottom-sheet `Modal`. No fixed-px widths and no unprefixed
+grid hazards exist anywhere. So this was a gap-closing pass, not a rebuild.
+
+### Delivered
+- **Safe-area insets.** `viewportFit: "cover"` was set but nothing consumed it, so on notched
+  phones the header sat under the status bar and modal footers under the home indicator. Added
+  `pt-safe` / `pb-safe` / `pb-safe-4` / `pl-safe` / `px-safe-4` to `globals.css` `@layer utilities`
+  and applied them to the shell header (now `min-h-14`, so the inset *adds* to the bar rather than
+  eating it), main, sidebar, drawer, `Modal` footer/body, and login. Landscape matters as much as
+  portrait — that's what `px-safe-4` is for.
+- **`vh` → `dvh`.** `Modal` was `max-h-[92vh]`; `vh` is the *large* viewport on mobile, so the
+  sheet ran under the browser chrome and under the keyboard whenever a field in it took focus.
+  Same fix on the desktop sidebar's `calc(100vh-3.5rem)`.
+- **Hover-gated controls fixed — a real functional bug.** The DPR photo delete buttons were
+  `opacity-0 group-hover:opacity-100`, so on a phone they were invisible and unreachable: a
+  supervisor could not remove a photo at all. Now gated on `[@media(hover:hover)]:` so touch
+  devices always show them. DPR photo capture is a primary mobile flow, which is what made this
+  the most serious find of the pass.
+- **Touch targets raised to 44px**: `Modal` close (was ~30px, appears in *every* modal), shell
+  hamburger + drawer close, invoice line-item delete, PWA install dismiss, and the Users
+  permission controls (`h-10 sm:h-8`, with "Read & Write" shortened to "Write" on mobile plus an
+  `aria-label` to stop the two-line wrap at ~100px).
+- **Invoice line items reworked for mobile.** Six inputs at `grid-cols-2` on a 360px screen relied
+  on placeholders as labels — which disappear the moment a value is typed, leaving a grid of
+  anonymous numbers. Added a `LineField` wrapper giving each field a persistent label below `lg`,
+  `inputMode="decimal"` on numeric fields, and a full-width line total.
+- **Invoice detail line items** were the only list in the app with no mobile fallback (a
+  `min-w-[34rem]` table inside a `max-w-2xl` modal = permanent side-scroll). Now uses the same
+  card/table split as the 13 list pages.
+
+### Verification
+- `pnpm typecheck` · `pnpm check` (Biome, 232 files) · `pnpm build` — all clean.
+- Static sweeps confirm **no** fixed-px width or `min-w-[Npx]` overflow hazards remain, and every
+  surviving `grid-cols-3+` is either responsive or intentional (square photo thumbnails).
+- **Not visually verified in a browser** — no Playwright/Puppeteer in this repo and no browser
+  tooling available in the session. Layout reasoning is from source. Worth a real-device pass on
+  one iPhone (notch + keyboard-over-modal) and one low-end Android before the contractor hand-off.
+
+### Follow-ups
+- DPR photo delete is `size-9` (36px), not 44px: a full-size target would cover most of the
+  thumbnail in the 3-up grid. Deliberate trade-off.
+- `mini-bar-chart` tooltip is still hover-only; it is `pointer-events-none` and purely
+  supplementary (the same values are in the table below it), so touch loses nothing.
+
+## Multi-tenant hardening — tenant-scoped user accounts, platform-admin tier, safe seeds ✅ (2026-08-03)
+
+Prep for handing the ERP to **three unrelated contractors on one deployment** (AA · 7 sites,
+BB · 3, CC · 2), each with their own users and data. A read-only isolation audit found the
+query layer genuinely sound — all 14 modules filter by `auth.siteId`, R2 keys are namespaced
+`{dpr,exports}/{siteId}/…` and no route signs a client-supplied key — so the gaps were all at
+the **identity layer**, around the `users` table. All four fixed here; the deployment is now
+considered safe for the multi-contractor hand-off.
+
+### Delivered
+- **Platform-admin tier** (`users.is_platform_admin`, `packages/db/src/schema/users.ts`).
+  Previously `is_owner` conflated the operator with every customer. The new flag is a strictly
+  higher tier gated by **`requirePlatformAdmin`** (`apps/api/src/common/middleware/`), surfaced
+  as `auth.isPlatformAdmin`. Deliberately grants **no implicit tenant data access** — reading a
+  site still needs a real membership, keeping support access explicit and auditable. Set by hand
+  in the DB; nothing in the API can grant it. No routes consume it yet (none needed today) and
+  no admin UI was built — the flag exists so the tier is enforceable when one is.
+- **Seeds can no longer create known-password accounts.** `seed.ts` dropped its
+  `admin@demo.test` / `ChangeMe123!` fallbacks; `provision-demo.ts` dropped its hardcoded
+  `kalpeshkumar123`. Both now **require** credentials from env and reject passwords under 12
+  chars. `seed.ts` is documented dev-only; `seed:provision-demo` is the per-contractor path.
+- **Site `code` is unique per owner, not globally.** Was a global `UNIQUE` — AA taking "VESU"
+  blocked BB *and* the 409 confirmed another tenant used it (a small cross-tenant leak).
+  Replaced with a partial composite unique index `sites_owner_code_uq (owner_user_id, code)
+  WHERE code IS NOT NULL`, so an owner may still keep many code-less sites. `assertCodeAvailable`
+  (`sites.routes.ts`) now scopes by owner and its message reads "You already have a site…".
+- **Migration `0014_salty_quentin_quire.sql`** — the three changes exactly, nothing else.
+
+- **Users module — cross-tenant account takeover closed.** `POST /users` resolved an email
+  **globally**, so contractor A could type B's employee address and silently attach that user to
+  A's site; `PATCH /users/{id}` then wrote `passwordHash`/`status` with only `eq(users.id, id)`,
+  making it a password reset on B's staff and a route into B's sites. Fixed with a tenant
+  boundary for user accounts — `users` is the one business table with no `siteId`, so it needed
+  an explicit one:
+  - **`tenantOwnerId(db, siteId)` + `resolveTenantUser(db, ownerUserId, email)`** — an email now
+    resolves only to an account inside the acting tenant (the owner themselves, or a member of a
+    site that owner owns). Anyone else is simply not found.
+  - **Non-disclosure, per the owner's explicit requirement that AA must not learn BB exists.** A
+    foreign address cannot be distinguished from an unused one: the missing-password check runs
+    *before* the taken-address check so both fail identically at every step, and the refusal
+    reads "This email address is not available." — never "already registered". This closes the
+    old 409-vs-400 enumeration oracle as a side effect.
+  - **`PATCH /users/{id}` account writes are tenant-scoped.** Site membership alone no longer
+    authorises writing the global `users` row: if the target also belongs to another owner's site
+    (or owns sites themselves), profile/status/password edits are refused while **site-local
+    permission changes stay allowed**. Defence in depth — this held even in the reverted-code
+    trial below, after a bad attach had already succeeded.
+
+### Verification
+- `pnpm typecheck` (4 packages) · `pnpm check` (Biome, 232 files) · `pnpm build` (Next 19 routes
+  + Wrangler dry-run) — all clean. Migration `0014` **applied** to the dev DB.
+- **New live check: `pnpm --filter @construction-erp/db check:isolation`**
+  (`packages/db/src/check-tenant-isolation.ts`). Provisions two throwaway owners against a
+  running `wrangler dev`, has AA run the full attack chain on BB, and cleans up every row it
+  creates (including on failure). **10/10 pass.**
+- The check was validated against the bug, not just the fix: temporarily restoring the global
+  email lookup produced **6 failures** — AA attaching BB's staff (201), BB's staff appearing in
+  AA's `GET /users` and search, and the enumeration oracle (foreign 409 vs unused 400).
+
+### Follow-ups (not done here)
+- Rate limiting is per-IP and per-isolate only (no user/tenant dimension) — acceptable at 3 pilot
+  tenants, revisit with KV/DO.
+- No per-owner site cap.
+- One genuine cross-tenant collision remains by design: `users.email` is globally unique, so the
+  same person cannot hold separate accounts under two contractors. Correct for now (an address
+  identifies one human), but it is the reason the create path needs the "not available" wording.
+
 ## Dashboard — Today's Sales / Purchases KPIs, chart tooltips, attendance-chart fix ✅ (2026-07-05)
 
 The owner asked for **Today's Purchase amount** and **Today's Sell amount** KPIs on the dashboard,

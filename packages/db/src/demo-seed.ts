@@ -416,7 +416,17 @@ async function wipeSite(db: ReturnType<typeof createDb>, siteId: string): Promis
  */
 export async function seedSite(
   db: ReturnType<typeof createDb>,
-  site: { id: string; name: string; code: string | null; city: string | null; state: string | null; address: string | null; legalName: string | null; gstin: string | null; stateCode: string | null },
+  site: {
+    id: string;
+    name: string;
+    code: string | null;
+    city: string | null;
+    state: string | null;
+    address: string | null;
+    legalName: string | null;
+    gstin: string | null;
+    stateCode: string | null;
+  },
   ownerId: string,
   r2: R2Cfg | null,
 ): Promise<void> {

@@ -4,6 +4,7 @@ import {
   RBAC_MODULES,
   type RbacModule,
   paginationQuerySchema,
+  searchSchema,
 } from "@construction-erp/shared";
 import { z } from "@hono/zod-openapi";
 
@@ -43,7 +44,7 @@ export const memberSchema = z
   .openapi("Member");
 
 export const listUsersQuerySchema = paginationQuerySchema.extend({
-  search: z.string().optional().openapi({ description: "Match against name or email." }),
+  search: searchSchema.openapi({ description: "Match against name or email." }),
   status: z.enum(["active", "disabled"]).optional(),
 });
 

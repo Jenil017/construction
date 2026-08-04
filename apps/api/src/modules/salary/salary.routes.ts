@@ -12,7 +12,7 @@ import { and, asc, desc, eq, gte, isNull, lte } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { writeAudit } from "../../common/audit";
 import { type DbClient, getDb } from "../../common/db";
-import { ConflictError, NotFoundError } from "../../common/errors";
+import { ConflictError, NotFoundError, ValidationError } from "../../common/errors";
 import { getRequestMeta } from "../../common/http/request-meta";
 import { idempotency } from "../../common/idempotency";
 import { requireAuth } from "../../common/middleware/require-auth";
@@ -112,11 +112,38 @@ function computeWorkerRow(w: WorkerMeta, a: AttAccum, advancesSum: number, payme
 /** Load a live worker on this site (for FK checks on advances/payments). */
 async function loadWorker(db: DbClient, siteId: string, id: string) {
   const [row] = await db
-    .select({ id: workers.id, name: workers.name })
+    .select({ id: workers.id, name: workers.name, dailyWage: workers.dailyWage })
     .from(workers)
     .where(and(eq(workers.id, id), eq(workers.siteId, siteId), isNull(workers.deletedAt)))
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * A single advance or payment cannot exceed a year of this worker's wages.
+ *
+ * Deliberately *not* capped at the month's `gross`: advances are normally paid
+ * mid-month, before attendance is complete, so gross is still small and a strict
+ * cap would block the ordinary case. This catches the fat-finger and the abuse
+ * (a ₹50,000 advance against a ₹700/day worker) while leaving genuine
+ * settlements, arrears, and bonuses room to go through.
+ */
+const MAX_WAGE_DAYS = 365;
+
+function assertWithinWageCeiling(
+  amount: number,
+  dailyWage: string,
+  field: "amount",
+  label: string,
+): number {
+  const ceiling = round2(Number(dailyWage) * MAX_WAGE_DAYS);
+  if (ceiling > 0 && amount > ceiling) {
+    throw new ValidationError(
+      `This ${label} is far above this worker's yearly wages. Check the amount.`,
+      { fields: { [field]: `Cannot be more than ${ceiling}.` } },
+    );
+  }
+  return amount;
 }
 
 // ─── Monthly per-worker view ─────────────────────────────────────────────────────
@@ -383,6 +410,12 @@ salaryRoutes.openapi(createAdvanceRoute, async (c) => {
 
   const worker = await loadWorker(db, siteId, body.workerId);
   if (!worker) throw new NotFoundError("Worker not found.");
+  const amount = assertWithinWageCeiling(
+    round2(body.amount),
+    worker.dailyWage,
+    "amount",
+    "advance",
+  );
 
   const created = await db.transaction(async (tx) => {
     const [row] = await tx
@@ -390,7 +423,7 @@ salaryRoutes.openapi(createAdvanceRoute, async (c) => {
       .values({
         siteId,
         workerId: body.workerId,
-        amount: String(round2(body.amount)),
+        amount: String(amount),
         advanceDate: body.advanceDate ?? today(),
         note: body.note ?? null,
         createdByUserId: auth.userId,
@@ -619,6 +652,12 @@ salaryRoutes.openapi(createPaymentRoute, async (c) => {
 
   const worker = await loadWorker(db, siteId, body.workerId);
   if (!worker) throw new NotFoundError("Worker not found.");
+  const amount = assertWithinWageCeiling(
+    round2(body.amount),
+    worker.dailyWage,
+    "amount",
+    "payment",
+  );
 
   const created = await db.transaction(async (tx) => {
     const [row] = await tx
@@ -627,7 +666,7 @@ salaryRoutes.openapi(createPaymentRoute, async (c) => {
         siteId,
         workerId: body.workerId,
         periodMonth: body.periodMonth,
-        amount: String(round2(body.amount)),
+        amount: String(amount),
         paidDate: body.paidDate ?? today(),
         paymentMode: body.paymentMode ?? null,
         note: body.note ?? null,

@@ -180,7 +180,7 @@ export default function DashboardPage() {
           </div>
           <Link
             href="/sites"
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            className="inline-flex h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 sm:h-10"
           >
             Go to Sites
           </Link>
@@ -188,39 +188,41 @@ export default function DashboardPage() {
       ) : null}
 
       {/* ── Dashboard widgets (hidden until a site exists) ──────── */}
-      {!isOwnerWithNoSite && (<>
-      {/* ── Today at a glance ──────────────────────────────────── */}
-      <section>
-        <SectionLabel>Today at a glance</SectionLabel>
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
-          <TodayAttendanceCard />
-          <TodaySalesCard />
-          <TodayPurchasesCard />
-          <TodayExpensesCard />
-          <DprPendingCard />
-          <PendingPaymentsCard />
-        </div>
-      </section>
+      {!isOwnerWithNoSite && (
+        <>
+          {/* ── Today at a glance ──────────────────────────────────── */}
+          <section>
+            <SectionLabel>Today at a glance</SectionLabel>
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
+              <TodayAttendanceCard />
+              <TodaySalesCard />
+              <TodayPurchasesCard />
+              <TodayExpensesCard />
+              <DprPendingCard />
+              <PendingPaymentsCard />
+            </div>
+          </section>
 
-      {/* ── 7-day trends ──────────────────────────────────────── */}
-      <section>
-        <SectionLabel>7-day trends</SectionLabel>
-        <div className="grid gap-3 sm:gap-4 md:grid-cols-2">
-          <ExpenseWeekCard />
-          <AttendanceWeekCard />
-        </div>
-      </section>
+          {/* ── 7-day trends ──────────────────────────────────────── */}
+          <section>
+            <SectionLabel>7-day trends</SectionLabel>
+            <div className="grid gap-3 sm:gap-4 md:grid-cols-2">
+              <ExpenseWeekCard />
+              <AttendanceWeekCard />
+            </div>
+          </section>
 
-      {/* ── Activity + inventory ──────────────────────────────── */}
-      <section>
-        <SectionLabel>Activity &amp; alerts</SectionLabel>
-        <div className="grid gap-3 sm:gap-4 lg:grid-cols-3">
-          <LowStockPanel />
-          <RecentDprPanel />
-          <QuickActionsPanel actions={actions} />
-        </div>
-      </section>
-      </>)}
+          {/* ── Activity + inventory ──────────────────────────────── */}
+          <section>
+            <SectionLabel>Activity &amp; alerts</SectionLabel>
+            <div className="grid gap-3 sm:gap-4 lg:grid-cols-3">
+              <LowStockPanel />
+              <RecentDprPanel />
+              <QuickActionsPanel actions={actions} />
+            </div>
+          </section>
+        </>
+      )}
     </div>
   );
 }

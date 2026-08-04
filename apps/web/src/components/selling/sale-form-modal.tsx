@@ -15,8 +15,19 @@ import {
   useCreateSale,
   useUpdateSale,
 } from "@/lib/hooks/use-selling";
+import {
+  formMoney,
+  formOptionalMoney,
+  formOptionalPhone,
+  formQuantity,
+  optionalStringMax,
+} from "@/lib/validation/forms";
+import { PAYMENT_MODES, pastOrTodayOrBlankSchema, today } from "@construction-erp/shared";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { ShoppingBag } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { z } from "zod";
 
 interface SaleFormModalProps {
   open: boolean;
@@ -24,35 +35,78 @@ interface SaleFormModalProps {
   sale?: SiteSale | null;
 }
 
-const PAYMENT_MODES = ["Cash", "UPI", "Bank transfer", "Cheque"];
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function fmtQty(n: number): string {
   return n.toLocaleString("en-IN", { maximumFractionDigits: 3 });
 }
+
+/**
+ * Mirrors `createSaleBodySchema` / `updateSaleBodySchema`. The stock ceiling is
+ * a per-render `superRefine` because it comes from the selected material, not
+ * from a constant — the server re-checks it against live stock regardless.
+ */
+function buildSchema(isEdit: boolean, available: number | null, unit: string | undefined) {
+  return z.object({
+    saleDate: pastOrTodayOrBlankSchema,
+    materialId: isEdit ? z.string() : z.string().uuid("Select an item to sell."),
+    quantity: isEdit
+      ? z.string()
+      : formQuantity().superRefine((n, ctx) => {
+          if (available != null && n > available) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `Only ${fmtQty(available)} ${unit ?? ""} in stock.`,
+            });
+          }
+        }),
+    ratePerUnit: formMoney(),
+    amountReceived: formOptionalMoney(),
+    buyerName: optionalStringMax(160),
+    buyerContact: formOptionalPhone,
+    paymentMode: z.enum(PAYMENT_MODES).nullable(),
+    notes: optionalStringMax(2000),
+  });
+}
+
+type SaleFormValues = z.input<ReturnType<typeof buildSchema>>;
+
+/** The schema output, once strings have been coerced and blanks nulled. */
+interface SaleFormOutput {
+  saleDate: string;
+  materialId: string;
+  quantity: number;
+  ratePerUnit: number;
+  amountReceived: number | null;
+  buyerName: string | null;
+  buyerContact: string | null;
+  paymentMode: string | null;
+  notes: string | null;
+}
+
+const EMPTY: SaleFormValues = {
+  saleDate: today(),
+  materialId: "",
+  quantity: "",
+  ratePerUnit: "",
+  amountReceived: "",
+  buyerName: "",
+  buyerContact: "",
+  paymentMode: "Cash",
+  notes: "",
+};
 
 export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
   const isEdit = !!sale;
   const createSale = useCreateSale();
   const updateSale = useUpdateSale();
+  const [error, setError] = useState<string | null>(null);
 
   // Only the create flow needs the in-stock item list (item is locked on edit).
   const { data: materials, isLoading: materialsLoading } = useAvailableMaterials(open && !isEdit);
 
-  const [saleDate, setSaleDate] = useState(today());
+  // The selected material has to be resolved *before* `useForm`, because the
+  // quantity ceiling in the schema is its current stock. Tracked here and kept
+  // in step by the Combobox's onChange rather than read back via `watch`.
   const [materialId, setMaterialId] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const [ratePerUnit, setRatePerUnit] = useState("");
-  const [amountReceived, setAmountReceived] = useState("");
-  const [buyerName, setBuyerName] = useState("");
-  const [buyerContact, setBuyerContact] = useState("");
-  const [paymentMode, setPaymentMode] = useState("Cash");
-  const [notes, setNotes] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
   const selectedMaterial = useMemo(
     () => materials?.find((m) => m.id === materialId) ?? null,
     [materials, materialId],
@@ -61,6 +115,23 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
   // Unit + available stock come from the chosen material (or the sale on edit).
   const unit = isEdit ? sale?.unit : selectedMaterial?.unit;
   const available = selectedMaterial?.currentStock ?? null;
+
+  const schema = useMemo(() => buildSchema(isEdit, available, unit), [isEdit, available, unit]);
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    control,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<SaleFormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: EMPTY,
+  });
+
+  const quantity = watch("quantity");
+  const ratePerUnit = watch("ratePerUnit");
 
   const options: ComboboxOption[] = useMemo(
     () =>
@@ -81,64 +152,50 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
   useEffect(() => {
     if (!open) return;
     setError(null);
-    setSaleDate(sale?.saleDate ?? today());
     setMaterialId(sale?.materialId ?? "");
-    setQuantity(sale?.quantity != null ? String(sale.quantity) : "");
-    setRatePerUnit(sale?.ratePerUnit != null ? String(sale.ratePerUnit) : "");
-    setAmountReceived("");
-    setBuyerName(sale?.buyerName ?? "");
-    setBuyerContact(sale?.buyerContact ?? "");
-    setPaymentMode(sale?.paymentMode ?? "Cash");
-    setNotes(sale?.notes ?? "");
-  }, [open, sale]);
+    reset(
+      sale
+        ? {
+            saleDate: sale.saleDate,
+            materialId: sale.materialId,
+            quantity: String(sale.quantity),
+            ratePerUnit: String(sale.ratePerUnit),
+            amountReceived: "",
+            buyerName: sale.buyerName ?? "",
+            buyerContact: sale.buyerContact ?? "",
+            paymentMode: (sale.paymentMode as SaleFormValues["paymentMode"]) ?? "Cash",
+            notes: sale.notes ?? "",
+          }
+        : EMPTY,
+    );
+  }, [open, sale, reset]);
 
-  const submit = async () => {
+  const onSubmit = handleSubmit(async (raw) => {
     setError(null);
-
-    if (!isEdit) {
-      if (!materialId) {
-        setError("Select an item to sell.");
-        return;
-      }
-      if (!quantity || Number.isNaN(qtyNum) || qtyNum <= 0) {
-        setError("Enter a quantity greater than zero.");
-        return;
-      }
-      if (available != null && qtyNum > available) {
-        setError(`Only ${fmtQty(available)} ${unit ?? ""} in stock.`);
-        return;
-      }
-    }
-
-    const rate = Number(ratePerUnit);
-    if (ratePerUnit === "" || Number.isNaN(rate) || rate < 0) {
-      setError("Enter a valid rate per unit (can be 0 for donated/disposed items).");
-      return;
-    }
-
+    const values = raw as unknown as SaleFormOutput;
     try {
       if (isEdit && sale) {
         const body: UpdateSaleInput = {
-          saleDate,
-          ratePerUnit: rate,
-          buyerName: buyerName.trim() || null,
-          buyerContact: buyerContact.trim() || null,
-          paymentMode,
-          notes: notes.trim() || null,
+          saleDate: values.saleDate,
+          ratePerUnit: values.ratePerUnit,
+          buyerName: values.buyerName,
+          buyerContact: values.buyerContact,
+          paymentMode: values.paymentMode,
+          notes: values.notes,
         };
         await updateSale.mutateAsync({ id: sale.id, body });
       } else {
-        const received = Number(amountReceived) || 0;
+        const received = values.amountReceived ?? 0;
         const body: CreateSaleInput = {
-          saleDate,
-          materialId,
-          quantity: qtyNum,
-          ratePerUnit: rate,
-          buyerName: buyerName.trim() || null,
-          buyerContact: buyerContact.trim() || null,
-          paymentMode,
+          saleDate: values.saleDate,
+          materialId: values.materialId,
+          quantity: values.quantity,
+          ratePerUnit: values.ratePerUnit,
+          buyerName: values.buyerName,
+          buyerContact: values.buyerContact,
+          paymentMode: values.paymentMode,
           ...(received > 0 ? { amountReceived: received } : {}),
-          notes: notes.trim() || null,
+          notes: values.notes,
         };
         await createSale.mutateAsync(body);
       }
@@ -146,9 +203,9 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not save the sale record.");
     }
-  };
+  });
 
-  const busy = createSale.isPending || updateSale.isPending;
+  const busy = isSubmitting || createSale.isPending || updateSale.isPending;
 
   return (
     <Modal
@@ -166,38 +223,43 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
           <Button variant="outline" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={busy || overStock}>
+          <Button onClick={onSubmit} disabled={busy || overStock}>
             {busy ? "Saving…" : "Save"}
           </Button>
         </>
       }
     >
-      <div className="space-y-4">
+      <form onSubmit={onSubmit} className="space-y-4" noValidate>
         <FormRow columns={2}>
-          <Field label="Sale date" htmlFor="sale-date">
-            <Input
-              id="sale-date"
-              type="date"
-              max={today()}
-              value={saleDate}
-              onChange={(e) => setSaleDate(e.target.value)}
-            />
+          <Field label="Sale date" htmlFor="sale-date" error={errors.saleDate?.message}>
+            <Input id="sale-date" type="date" max={today()} {...register("saleDate")} />
           </Field>
-          <Field label="Item" htmlFor="sale-item" required>
+          <Field label="Item" htmlFor="sale-item" required error={errors.materialId?.message}>
             {isEdit ? (
               <Input id="sale-item" value={sale?.itemDescription ?? ""} disabled />
             ) : (
-              <Combobox
-                id="sale-item"
-                options={options}
-                value={materialId}
-                onChange={setMaterialId}
-                disabled={materialsLoading}
-                placeholder={materialsLoading ? "Loading items…" : "Select an item…"}
-                searchPlaceholder="Type to search inventory…"
-                emptyText={
-                  materialsLoading ? "Loading…" : "No items in stock. Add stock in Inventory first."
-                }
+              <Controller
+                control={control}
+                name="materialId"
+                render={({ field }) => (
+                  <Combobox
+                    id="sale-item"
+                    options={options}
+                    value={field.value}
+                    onChange={(v) => {
+                      field.onChange(v);
+                      setMaterialId(v);
+                    }}
+                    disabled={materialsLoading}
+                    placeholder={materialsLoading ? "Loading items…" : "Select an item…"}
+                    searchPlaceholder="Type to search inventory…"
+                    emptyText={
+                      materialsLoading
+                        ? "Loading…"
+                        : "No items in stock. Add stock in Inventory first."
+                    }
+                  />
+                )}
               />
             )}
           </Field>
@@ -213,18 +275,18 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
         ) : null}
 
         <FormRow columns={3}>
-          <Field label="Quantity" htmlFor="sale-qty" required>
+          <Field label="Quantity" htmlFor="sale-qty" required error={errors.quantity?.message}>
             <Input
               id="sale-qty"
               type="number"
+              inputMode="decimal"
               min="0"
               max={!isEdit && available != null ? available : undefined}
               step="any"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
               disabled={isEdit}
               placeholder="e.g. 50"
               aria-invalid={overStock}
+              {...register("quantity")}
             />
           </Field>
           <Field label="Unit" htmlFor="sale-unit">
@@ -235,15 +297,20 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
               placeholder={isEdit ? "" : "Pick an item"}
             />
           </Field>
-          <Field label="Rate / unit (₹)" htmlFor="sale-rate" required>
+          <Field
+            label="Rate / unit (₹)"
+            htmlFor="sale-rate"
+            required
+            error={errors.ratePerUnit?.message}
+          >
             <Input
               id="sale-rate"
               type="number"
+              inputMode="decimal"
               min="0"
               step="any"
-              value={ratePerUnit}
-              onChange={(e) => setRatePerUnit(e.target.value)}
               placeholder="e.g. 35"
+              {...register("ratePerUnit")}
             />
             {!isEdit && selectedMaterial?.unitCost != null ? (
               <p className="mt-1 text-xs text-muted-foreground">
@@ -267,31 +334,27 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
         ) : null}
 
         <FormRow columns={2}>
-          <Field label="Buyer name" htmlFor="sale-buyer">
+          <Field label="Buyer name" htmlFor="sale-buyer" error={errors.buyerName?.message}>
             <Input
               id="sale-buyer"
-              value={buyerName}
-              onChange={(e) => setBuyerName(e.target.value)}
               placeholder="Name of the buyer (optional)"
+              {...register("buyerName")}
             />
           </Field>
-          <Field label="Buyer contact" htmlFor="sale-contact">
+          <Field label="Buyer contact" htmlFor="sale-contact" error={errors.buyerContact?.message}>
             <Input
               id="sale-contact"
-              value={buyerContact}
-              onChange={(e) => setBuyerContact(e.target.value)}
+              type="tel"
+              inputMode="numeric"
               placeholder="Phone number (optional)"
+              {...register("buyerContact")}
             />
           </Field>
         </FormRow>
 
         <FormRow columns={2}>
-          <Field label="Payment mode" htmlFor="sale-mode">
-            <Select
-              id="sale-mode"
-              value={paymentMode}
-              onChange={(e) => setPaymentMode(e.target.value)}
-            >
+          <Field label="Payment mode" htmlFor="sale-mode" error={errors.paymentMode?.message}>
+            <Select id="sale-mode" {...register("paymentMode")}>
               {PAYMENT_MODES.map((m) => (
                 <option key={m} value={m}>
                   {m}
@@ -300,26 +363,29 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
             </Select>
           </Field>
           {!isEdit ? (
-            <Field label="Amount received so far (₹)" htmlFor="sale-received">
+            <Field
+              label="Amount received so far (₹)"
+              htmlFor="sale-received"
+              error={errors.amountReceived?.message}
+            >
               <Input
                 id="sale-received"
                 type="number"
+                inputMode="decimal"
                 min="0"
                 step="any"
-                value={amountReceived}
-                onChange={(e) => setAmountReceived(e.target.value)}
                 placeholder="0 — enter if already received"
+                {...register("amountReceived")}
               />
             </Field>
           ) : null}
         </FormRow>
 
-        <Field label="Notes" htmlFor="sale-notes">
+        <Field label="Notes" htmlFor="sale-notes" error={errors.notes?.message}>
           <Input
             id="sale-notes"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
             placeholder="Any additional details (optional)"
+            {...register("notes")}
           />
         </Field>
 
@@ -328,7 +394,7 @@ export function SaleFormModal({ open, onClose, sale }: SaleFormModalProps) {
             {error}
           </div>
         ) : null}
-      </div>
+      </form>
     </Modal>
   );
 }

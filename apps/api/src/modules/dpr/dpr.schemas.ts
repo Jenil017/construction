@@ -1,8 +1,14 @@
-import { paginationQuerySchema } from "@construction-erp/shared";
+import {
+  dateSchema,
+  paginationQuerySchema,
+  pastOrTodaySchema,
+  quantitySchema,
+  searchSchema,
+} from "@construction-erp/shared";
 import { z } from "@hono/zod-openapi";
+import { nullableText } from "../../common/validation";
 
 export const DPR_STATUSES = ["submitted", "approved"] as const;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Images only, up to 10 MB (mobile camera photos). */
 export const ALLOWED_PHOTO_TYPES = [
@@ -69,37 +75,33 @@ export const dprSchema = z
   .openapi("Dpr");
 
 export const listDprQuerySchema = paginationQuerySchema.extend({
-  search: z.string().optional().openapi({ description: "Match work category or location." }),
+  search: searchSchema.openapi({ description: "Match work category or location." }),
   status: z.enum(DPR_STATUSES).optional(),
-  date: z
-    .string()
-    .regex(DATE_RE)
-    .optional()
-    .openapi({ description: "Exact report date (YYYY-MM-DD)." }),
+  date: dateSchema.optional().openapi({ description: "Exact report date (YYYY-MM-DD)." }),
 });
 
 const baseDprFields = {
-  workCategory: z.string().max(120).nullable().optional(),
-  location: z.string().max(200).nullable().optional(),
-  completedWork: z.string().max(5000).nullable().optional(),
-  pendingWork: z.string().max(5000).nullable().optional(),
-  quantityValue: z.number().nonnegative().nullable().optional(),
-  quantityUnit: z.string().max(40).nullable().optional(),
-  remarks: z.string().max(5000).nullable().optional(),
+  workCategory: nullableText(120),
+  location: nullableText(200),
+  completedWork: nullableText(5000),
+  pendingWork: nullableText(5000),
+  quantityValue: quantitySchema({ allowZero: true }).nullable().optional(),
+  quantityUnit: nullableText(40),
+  remarks: nullableText(5000),
 };
 
 // Reports are submitted on creation; approval is a separate, permission-gated
 // action, so the client never sets `status` directly.
 export const createDprBodySchema = z
   .object({
-    reportDate: z.string().regex(DATE_RE),
+    reportDate: pastOrTodaySchema,
     ...baseDprFields,
   })
   .openapi("CreateDprRequest");
 
 export const updateDprBodySchema = z
   .object({
-    reportDate: z.string().regex(DATE_RE).optional(),
+    reportDate: pastOrTodaySchema.optional(),
     ...baseDprFields,
   })
   .openapi("UpdateDprRequest");

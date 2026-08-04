@@ -4,3 +4,4 @@ export * from "./http/pagination";
 export * from "./rbac/permissions";
 export * from "./crypto/password";
 export * from "./crypto/tokens";
+export * from "./validation/primitives";

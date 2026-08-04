@@ -11,9 +11,20 @@ import { siteMemberPermissions, siteMembers, sites, users } from "./schema";
  *     levels (read-only on one, read+write on another) to demo the switcher.
  *
  * There is no public signup — the owner provisions other users (per site) via
- * the Users module. Run with `pnpm db:seed` (needs DATABASE_URL). Credentials
- * come from env: SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD, SEED_ADMIN_NAME.
+ * the Users module. Run with `pnpm db:seed` (needs DATABASE_URL).
+ *
+ * This is a DEVELOPMENT seed: it creates sample sites and a sample member. Do
+ * not run it against a customer/production database — provision real owners
+ * with `seed:provision-demo` instead. All credentials are required from env
+ * (SEED_ADMIN_EMAIL/PASSWORD, SEED_MEMBER_EMAIL/PASSWORD) with no defaults, so
+ * a stock checkout can never create a known-password account.
  */
+
+function requiredEnv(key: string): string {
+  const value = process.env[key]?.trim();
+  if (!value) throw new Error(`${key} is required (set it in packages/db/.env).`);
+  return value;
+}
 
 // Modules a site member is typically granted (the owner always has full access).
 const MEMBER_MODULES: RbacModule[] = [
@@ -38,12 +49,17 @@ async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required to seed.");
 
-  const ownerEmail = (process.env.SEED_ADMIN_EMAIL ?? "admin@demo.test").toLowerCase();
-  const ownerPassword = process.env.SEED_ADMIN_PASSWORD ?? "ChangeMe123!";
-  const ownerName = process.env.SEED_ADMIN_NAME ?? "Jemish";
-  const memberEmail = (process.env.SEED_MEMBER_EMAIL ?? "partner@demo.test").toLowerCase();
-  const memberPassword = process.env.SEED_MEMBER_PASSWORD ?? "ChangeMe123!";
-  const memberName = process.env.SEED_MEMBER_NAME ?? "Jainil";
+  // No credential defaults: a hardcoded password here becomes a live, publicly
+  // guessable site-creating account the moment this runs against a real DB.
+  // No strength rule though — this seed is for dev fixtures, and the accounts it
+  // makes are throwaway. Real contractor credentials go through
+  // `seed:provision-demo`, which does enforce a length floor.
+  const ownerEmail = requiredEnv("SEED_ADMIN_EMAIL").toLowerCase();
+  const ownerPassword = requiredEnv("SEED_ADMIN_PASSWORD");
+  const ownerName = process.env.SEED_ADMIN_NAME ?? "Owner";
+  const memberEmail = requiredEnv("SEED_MEMBER_EMAIL").toLowerCase();
+  const memberPassword = requiredEnv("SEED_MEMBER_PASSWORD");
+  const memberName = process.env.SEED_MEMBER_NAME ?? "Member";
 
   await configureNeonForNode();
   const db = createDb(databaseUrl);

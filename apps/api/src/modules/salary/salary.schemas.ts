@@ -1,7 +1,12 @@
+import {
+  moneySchema,
+  monthSchema,
+  optionalPaymentModeSchema,
+  pastOrTodaySchema,
+} from "@construction-erp/shared";
 import { z } from "@hono/zod-openapi";
+import { nullableText } from "../../common/validation";
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const MONTH_RE = /^\d{4}-\d{2}$/;
 export const PAYMENT_STATUSES = ["unpaid", "partial", "paid"] as const;
 
 const personSchema = z.object({ id: z.string().uuid(), name: z.string() });
@@ -15,7 +20,7 @@ export const salaryIdParamSchema = z.object({
 
 // ─── Monthly per-worker view ─────────────────────────────────────────────────────
 export const monthQuerySchema = z.object({
-  month: z.string().regex(MONTH_RE).openapi({ description: "The month to compute, YYYY-MM." }),
+  month: monthSchema.openapi({ description: "The month to compute, YYYY-MM." }),
 });
 
 export const salaryWorkerRowSchema = z
@@ -109,15 +114,15 @@ export const advanceSchema = z
 
 export const listAdvancesQuerySchema = z.object({
   workerId: z.string().uuid().optional(),
-  month: z.string().regex(MONTH_RE).optional(),
+  month: monthSchema.optional(),
 });
 
 export const createAdvanceBodySchema = z
   .object({
     workerId: z.string().uuid(),
-    amount: z.number().positive(),
-    advanceDate: z.string().regex(DATE_RE).optional(),
-    note: z.string().max(200).nullable().optional(),
+    amount: moneySchema({ allowZero: false }),
+    advanceDate: pastOrTodaySchema.optional(),
+    note: nullableText(200),
   })
   .openapi("CreateAdvanceRequest");
 
@@ -140,17 +145,17 @@ export const paymentSchema = z
 
 export const listPaymentsQuerySchema = z.object({
   workerId: z.string().uuid().optional(),
-  month: z.string().regex(MONTH_RE).optional(),
+  month: monthSchema.optional(),
 });
 
 export const createPaymentBodySchema = z
   .object({
     workerId: z.string().uuid(),
-    periodMonth: z.string().regex(MONTH_RE),
-    amount: z.number().positive(),
-    paidDate: z.string().regex(DATE_RE).optional(),
-    paymentMode: z.string().max(40).nullable().optional(),
-    note: z.string().max(200).nullable().optional(),
+    periodMonth: monthSchema,
+    amount: moneySchema({ allowZero: false }),
+    paidDate: pastOrTodaySchema.optional(),
+    paymentMode: optionalPaymentModeSchema.nullable(),
+    note: nullableText(200),
   })
   .openapi("CreateSalaryPaymentRequest");
 

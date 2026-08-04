@@ -2,17 +2,25 @@
 
 import { useAuth } from "@/lib/auth/auth-context";
 import { cn } from "@/lib/utils";
-import { HardHat, MapPinOff, Menu, X } from "lucide-react";
+import { HardHat, Menu, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { NAV_ITEMS, type NavItem, SETTINGS_ITEMS } from "./nav-items";
+import { NoSiteState } from "./no-site-state";
 import { SiteSwitcher } from "./site-switcher";
 import { UserMenu } from "./user-menu";
 
 function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
+
+/**
+ * Routes that work without an active site. `/sites` is how a site gets created
+ * in the first place, and `/dashboard` renders its own "create your first site"
+ * panel rather than the generic one.
+ */
+const SITELESS_ROUTES = ["/sites", "/dashboard"];
 
 /**
  * Responsive app shell: static navy sidebar on desktop (md+); a hamburger-driven
@@ -59,7 +67,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           onClick={onNavigate}
           aria-current={active ? "page" : undefined}
           className={cn(
-            "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+            // min-h-11 on touch (these drawer links are the primary mobile
+            // navigation), back to the denser 36px from `md` up where the same
+            // markup renders in the desktop sidebar.
+            "group relative flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors md:min-h-0",
             active
               ? "bg-sidebar-hover/70 font-semibold text-white before:absolute before:top-2 before:bottom-2 before:left-0 before:w-1 before:rounded-full before:bg-sidebar-active before:content-['']"
               : "font-medium text-sidebar-muted hover:bg-sidebar-hover/50 hover:text-sidebar-foreground",
@@ -96,20 +107,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-background">
       {/* Top bar */}
-      <header className="sticky top-0 z-30 flex h-14 items-center gap-1 border-b border-white/5 bg-sidebar px-2 text-sidebar-foreground sm:px-4">
+      {/* `h-auto` + `min-h` rather than a fixed `h-14`: the safe-area padding has
+          to add to the bar's height, not eat into it, or the notch overlaps the
+          controls instead of clearing them. */}
+      <header className="sticky top-0 z-30 flex min-h-14 items-center gap-1 border-b border-white/5 bg-sidebar px-2 pt-safe text-sidebar-foreground sm:px-4">
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
           aria-label="Open menu"
           aria-expanded={mobileOpen}
-          className="rounded-md p-2 text-sidebar-muted transition-colors hover:bg-sidebar-hover hover:text-sidebar-foreground md:hidden"
+          className="-ml-0.5 flex size-11 shrink-0 items-center justify-center rounded-md text-sidebar-muted transition-colors hover:bg-sidebar-hover hover:text-sidebar-foreground md:hidden"
         >
           <Menu className="size-5" />
         </button>
 
         <Link
           href="/dashboard"
-          className="flex items-center gap-2.5 px-1 font-semibold tracking-tight text-sidebar-foreground"
+          className="flex min-h-11 items-center gap-2.5 px-1 font-semibold tracking-tight text-sidebar-foreground sm:min-h-0"
         >
           <span className="flex size-7 items-center justify-center rounded-md bg-accent-solid text-[#101b2e] shadow-sm">
             <HardHat className="size-4" />
@@ -127,23 +141,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <div className="flex">
         {/* Desktop sidebar */}
-        <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-60 shrink-0 overflow-y-auto border-r border-white/5 bg-[linear-gradient(180deg,#13223b_0%,#0e1828_100%)] p-3 md:block">
+        {/* `dvh`, not `vh`: on mobile browsers `vh` measures the *large* viewport
+            and ignores the collapsing URL bar, which leaves the sidebar taller
+            than the screen. Desktop is unaffected (the two are equal there). */}
+        <aside className="sticky top-14 hidden h-[calc(100dvh-3.5rem)] w-60 shrink-0 overflow-y-auto border-r border-white/5 bg-[linear-gradient(180deg,#13223b_0%,#0e1828_100%)] p-3 pl-safe md:block">
           {navContent()}
         </aside>
 
-        <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
+        {/* `px-safe-4` carries the horizontal padding itself (1/1.5/2rem, floored
+            by the landscape notch inset) — don't add `px-*` here or it wins by
+            source order. `pb-safe-4` clears the home indicator. */}
+        <main className="min-w-0 flex-1 px-safe-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pt-6 sm:pb-6 lg:pt-8 lg:pb-8">
           <div className="mx-auto w-full max-w-[1400px] animate-rise-in">
-            {activeSite || isOwner ? (
+            {/* Every module endpoint is site-scoped, so without an active site
+                the page can only render a wall of failed requests. Gate here,
+                once, rather than in each of the 13 module pages. `/sites` is
+                exempt (it's where a site gets created) and `/dashboard` carries
+                its own tailored nudge. */}
+            {activeSite || SITELESS_ROUTES.some((r) => isActive(pathname, r)) ? (
               children
             ) : (
-              <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-                <MapPinOff className="size-8" />
-                <p className="text-sm">
-                  You haven't been assigned to any site yet.
-                  <br />
-                  Please contact your administrator.
-                </p>
-              </div>
+              <NoSiteState isOwner={isOwner} />
             )}
           </div>
         </main>
@@ -168,7 +186,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         />
         <aside
           className={cn(
-            "absolute top-0 left-0 flex h-full w-72 max-w-[82%] flex-col overflow-y-auto bg-[linear-gradient(180deg,#13223b_0%,#0e1828_100%)] p-3 shadow-xl transition-transform duration-200 ease-out",
+            "absolute top-0 left-0 flex h-full w-72 max-w-[82%] flex-col overflow-y-auto bg-[linear-gradient(180deg,#13223b_0%,#0e1828_100%)] p-3 pt-safe pb-safe-4 pl-safe shadow-xl transition-transform duration-200 ease-out",
             mobileOpen ? "translate-x-0" : "-translate-x-full",
           )}
         >
@@ -183,7 +201,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               type="button"
               onClick={() => setMobileOpen(false)}
               aria-label="Close menu"
-              className="rounded-md p-1.5 text-sidebar-muted transition-colors hover:bg-sidebar-hover hover:text-sidebar-foreground"
+              className="-mr-1.5 flex size-11 shrink-0 items-center justify-center rounded-md text-sidebar-muted transition-colors hover:bg-sidebar-hover hover:text-sidebar-foreground"
             >
               <X className="size-5" />
             </button>

@@ -69,9 +69,12 @@ export function Modal({
         className="absolute inset-0 cursor-default bg-[#0b1220]/45 backdrop-blur-sm animate-fade-in"
         onClick={onClose}
       />
+      {/* `dvh` not `vh`: on mobile `vh` is the *large* viewport, so a `92vh` sheet
+          extends under the browser chrome — and under the on-screen keyboard the
+          moment a field in it takes focus. `dvh` tracks the visible area. */}
       <div
         className={cn(
-          "relative z-10 flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl border border-border/70 bg-card shadow-xl animate-pop-in sm:rounded-2xl",
+          "relative z-10 flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-2xl border border-border/70 bg-card shadow-xl animate-pop-in sm:max-h-[90dvh] sm:rounded-2xl",
           SIZE[size],
         )}
       >
@@ -91,14 +94,27 @@ export function Modal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="-mr-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            className="-mt-1 -mr-2.5 flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:size-9"
           >
             <X className="size-4" />
           </button>
         </div>
-        <div className="overflow-y-auto px-5 py-5">{children}</div>
+        {/* When there's no footer the body is the bottom edge, so it takes the
+            inset instead. `overscroll-contain` stops a scroll that reaches the
+            end of this pane from chaining to the page behind the sheet. */}
+        <div
+          className={cn(
+            "overflow-y-auto overscroll-contain px-5 pt-5",
+            footer ? "pb-5" : "pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:pb-5",
+          )}
+        >
+          {children}
+        </div>
+        {/* The sheet is flush to the bottom edge on mobile, so the footer is what
+            sits over the home indicator — it carries the inset, not the sheet.
+            Falls back to the plain `py-4` on every device reporting a 0 inset. */}
         {footer ? (
-          <div className="flex justify-end gap-2 border-t border-border/70 bg-muted/30 px-5 py-4">
+          <div className="flex justify-end gap-2 border-t border-border/70 bg-muted/30 px-5 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4">
             {footer}
           </div>
         ) : null}

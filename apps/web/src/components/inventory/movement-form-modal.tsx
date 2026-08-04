@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Field, FormRow } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
@@ -11,8 +12,13 @@ import {
   type MovementType,
   useCreateStockMovement,
 } from "@/lib/hooks/use-inventory";
+import { formOptionalMoney, formQuantity, optionalStringMax } from "@/lib/validation/forms";
+import { pastOrTodayOrBlankSchema, today } from "@construction-erp/shared";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRightLeft } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 interface MovementFormModalProps {
   open: boolean;
@@ -30,31 +36,92 @@ const TYPES: { value: MovementType; label: string; hint: string }[] = [
 const textareaClass =
   "flex min-h-[72px] w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow,border-color] placeholder:text-muted-foreground/60 hover:border-foreground/25 focus-visible:border-accent-solid focus-visible:ring-2 focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
 
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+/**
+ * Mirrors the API's `createMovementBodySchema`. `amount` is one field in the form
+ * but two on the wire: an adjustment sends it as `newStock` (0 allowed — a stock-take
+ * can count zero), everything else as a positive `quantity`. Zero is rejected for the
+ * latter by the refine below rather than by two separate schemas.
+ */
+const movementFormSchema = z
+  .object({
+    type: z.enum(["inward", "outward", "wastage", "adjustment"]),
+    amount: formQuantity({ allowZero: true }),
+    movementDate: pastOrTodayOrBlankSchema,
+    unitCost: formOptionalMoney(),
+    reference: optionalStringMax(160),
+    note: optionalStringMax(2000),
+  })
+  .refine((v) => v.type === "adjustment" || v.amount > 0, {
+    message: "Enter a quantity greater than 0.",
+    path: ["amount"],
+  });
+
+/** The raw form values are all strings; the schema output is what the API takes. */
+type MovementFormValues = z.input<typeof movementFormSchema>;
+
+const EMPTY: MovementFormValues = {
+  type: "inward",
+  amount: "",
+  movementDate: today(),
+  unitCost: "",
+  reference: "",
+  note: "",
+};
 
 export function MovementFormModal({ open, onClose, material }: MovementFormModalProps) {
   const createMovement = useCreateStockMovement();
-
-  const [type, setType] = useState<MovementType>("inward");
-  const [amount, setAmount] = useState("");
-  const [movementDate, setMovementDate] = useState(today());
-  const [unitCost, setUnitCost] = useState("");
-  const [reference, setReference] = useState("");
-  const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setValue,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<MovementFormValues>({
+    resolver: zodResolver(movementFormSchema),
+    defaultValues: EMPTY,
+  });
 
   useEffect(() => {
     if (!open) return;
-    setType("inward");
-    setAmount("");
-    setMovementDate(today());
-    setUnitCost("");
-    setReference("");
-    setNote("");
     setError(null);
-  }, [open]);
+    reset(EMPTY);
+  }, [open, reset]);
+
+  const type = watch("type");
+  const amount = watch("amount");
+
+  const onSubmit = handleSubmit(async (values) => {
+    if (!material) return;
+    setError(null);
+    // `values` is the schema *output*: trimmed, coerced, "" already mapped to null.
+    const v = values as unknown as {
+      type: MovementType;
+      amount: number;
+      movementDate: string;
+      unitCost: number | null;
+      reference: string | null;
+      note: string | null;
+    };
+    const body: CreateMovementInput = {
+      materialId: material.id,
+      type: v.type,
+      movementDate: v.movementDate,
+      reference: v.reference,
+      note: v.note,
+      ...(v.type === "adjustment" ? { newStock: v.amount } : { quantity: v.amount }),
+      ...(v.type === "inward" && v.unitCost != null ? { unitCost: v.unitCost } : {}),
+    };
+
+    try {
+      await createMovement.mutateAsync(body);
+      onClose();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not record the movement.");
+    }
+  });
 
   if (!material) return null;
   const isAdjustment = type === "adjustment";
@@ -68,45 +135,7 @@ export function MovementFormModal({ open, onClose, material }: MovementFormModal
     else resulting = material.currentStock - parsed;
   }
 
-  const submit = async () => {
-    setError(null);
-    const value = Number(amount);
-    if (amount.trim() === "" || Number.isNaN(value) || value < 0) {
-      setError(
-        isAdjustment ? "Enter the counted stock (0 or more)." : "Enter a quantity greater than 0.",
-      );
-      return;
-    }
-    if (!isAdjustment && value <= 0) {
-      setError("Enter a quantity greater than 0.");
-      return;
-    }
-
-    const cost = unitCost.trim() === "" ? null : Number(unitCost);
-    if (cost != null && (Number.isNaN(cost) || cost < 0)) {
-      setError("Unit cost must be a non-negative number.");
-      return;
-    }
-
-    const body: CreateMovementInput = {
-      materialId: material.id,
-      type,
-      movementDate,
-      reference: reference.trim() || null,
-      note: note.trim() || null,
-      ...(isAdjustment ? { newStock: value } : { quantity: value }),
-      ...(type === "inward" && cost != null ? { unitCost: cost } : {}),
-    };
-
-    try {
-      await createMovement.mutateAsync(body);
-      onClose();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not record the movement.");
-    }
-  };
-
-  const busy = createMovement.isPending;
+  const busy = isSubmitting || createMovement.isPending;
 
   return (
     <Modal
@@ -120,13 +149,13 @@ export function MovementFormModal({ open, onClose, material }: MovementFormModal
           <Button variant="outline" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={busy}>
+          <Button onClick={onSubmit} disabled={busy}>
             {busy ? "Saving…" : "Record"}
           </Button>
         </>
       }
     >
-      <div className="space-y-4">
+      <form onSubmit={onSubmit} className="space-y-4" noValidate>
         <div className="space-y-1.5">
           <Label>Type</Label>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -134,7 +163,7 @@ export function MovementFormModal({ open, onClose, material }: MovementFormModal
               <button
                 key={t.value}
                 type="button"
-                onClick={() => setType(t.value)}
+                onClick={() => setValue("type", t.value)}
                 className={`rounded-md border px-3 py-2 text-sm transition-colors ${
                   type === t.value
                     ? "border-primary bg-primary/10 text-primary"
@@ -150,66 +179,59 @@ export function MovementFormModal({ open, onClose, material }: MovementFormModal
           </p>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="mv-amount">
-              {isAdjustment ? `Counted stock (${material.unit})` : `Quantity (${material.unit})`}
-            </Label>
+        <FormRow columns={2}>
+          <Field
+            label={
+              isAdjustment ? `Counted stock (${material.unit})` : `Quantity (${material.unit})`
+            }
+            htmlFor="mv-amount"
+            required
+            error={errors.amount?.message}
+          >
             <Input
               id="mv-amount"
               type="number"
+              inputMode="decimal"
               min="0"
               step="any"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
               placeholder={isAdjustment ? "New stock count" : "How much"}
+              {...register("amount")}
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="mv-date">Date</Label>
-            <Input
-              id="mv-date"
-              type="date"
-              value={movementDate}
-              onChange={(e) => setMovementDate(e.target.value)}
-            />
-          </div>
+          </Field>
+          <Field label="Date" htmlFor="mv-date" error={errors.movementDate?.message}>
+            <Input id="mv-date" type="date" max={today()} {...register("movementDate")} />
+          </Field>
           {type === "inward" ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="mv-cost">Unit cost (₹)</Label>
+            <Field label="Unit cost (₹)" htmlFor="mv-cost" error={errors.unitCost?.message}>
               <Input
                 id="mv-cost"
                 type="number"
+                inputMode="decimal"
                 min="0"
                 step="any"
-                value={unitCost}
-                onChange={(e) => setUnitCost(e.target.value)}
                 placeholder="Optional"
+                {...register("unitCost")}
               />
-            </div>
+            </Field>
           ) : null}
-          <div className="space-y-1.5">
-            <Label htmlFor="mv-ref">Reference</Label>
+          <Field label="Reference" htmlFor="mv-ref" error={errors.reference?.message}>
             <Input
               id="mv-ref"
-              value={reference}
-              onChange={(e) => setReference(e.target.value)}
               placeholder="Supplier / bill no / DPR (optional)"
+              {...register("reference")}
             />
-          </div>
-        </div>
+          </Field>
+        </FormRow>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="mv-note">Note</Label>
+        <Field label="Note" htmlFor="mv-note" error={errors.note?.message}>
           <textarea
             id="mv-note"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
             rows={2}
             placeholder="Optional"
             className={textareaClass}
+            {...register("note")}
           />
-        </div>
+        </Field>
 
         {resulting != null ? (
           <div
@@ -226,7 +248,7 @@ export function MovementFormModal({ open, onClose, material }: MovementFormModal
         {error ? (
           <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
         ) : null}
-      </div>
+      </form>
     </Modal>
   );
 }

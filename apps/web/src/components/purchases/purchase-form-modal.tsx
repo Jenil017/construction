@@ -9,8 +9,19 @@ import { Select } from "@/components/ui/select";
 import { ApiError } from "@/lib/api-client";
 import { useMaterials } from "@/lib/hooks/use-inventory";
 import { type CreatePurchaseInput, useCreatePurchase } from "@/lib/hooks/use-purchases";
+import {
+  formMoney,
+  formOptionalMoney,
+  formQuantity,
+  optionalStringMax,
+  requiredString,
+} from "@/lib/validation/forms";
+import { PAYMENT_MODES, pastOrTodayOrBlankSchema, today } from "@construction-erp/shared";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Link2, Plus, ShoppingCart, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 interface PurchaseFormModalProps {
   open: boolean;
@@ -45,12 +56,6 @@ const UNIT_SUGGESTIONS = [
   "running ft",
 ];
 
-const PAYMENT_MODES = ["Cash", "UPI", "Bank transfer", "Cheque", "Credit"];
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 const emptyLine = (key: number): LineDraft => ({
   key,
   materialId: "",
@@ -61,34 +66,79 @@ const emptyLine = (key: number): LineDraft => ({
   showMaterial: false,
 });
 
+/** Header fields. Maxes mirror `createPurchaseBodySchema`. */
+const purchaseFormSchema = z.object({
+  sellerName: requiredString(160, "Enter a seller / vendor name."),
+  poNumber: optionalStringMax(40),
+  orderDate: pastOrTodayOrBlankSchema,
+  paymentMode: z.enum(PAYMENT_MODES).nullable(),
+  amountPaid: formOptionalMoney(),
+  taxAmount: formOptionalMoney(),
+  notes: optionalStringMax(2000),
+});
+
+type PurchaseFormValues = z.input<typeof purchaseFormSchema>;
+
+interface PurchaseFormOutput {
+  sellerName: string;
+  poNumber: string | null;
+  orderDate: string;
+  paymentMode: string | null;
+  amountPaid: number | null;
+  taxAmount: number | null;
+  notes: string | null;
+}
+
+/**
+ * Line items stay in `useState` (they carry per-row UI state the form doesn't
+ * own — the inventory-link toggle and the material auto-fill), so they are
+ * validated with a plain parse at submit instead of `useFieldArray`.
+ */
+const lineSchema = z.object({
+  materialId: z.string().uuid().nullable(),
+  description: requiredString(200, "Each line needs a description."),
+  quantity: formQuantity(),
+  unit: optionalStringMax(40),
+  // Rate is required per line but may be 0 (free / bundled items).
+  rate: formMoney(),
+});
+
+const EMPTY: PurchaseFormValues = {
+  sellerName: "",
+  poNumber: "",
+  orderDate: today(),
+  paymentMode: "Cash",
+  amountPaid: "",
+  taxAmount: "",
+  notes: "",
+};
+
 export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModalProps) {
   const createPurchase = useCreatePurchase();
   const { data: materials } = useMaterials();
 
   const keyRef = useRef(1);
-  const [sellerName, setSellerName] = useState("");
-  const [poNumber, setPoNumber] = useState("");
-  const [orderDate, setOrderDate] = useState(today());
-  const [paymentMode, setPaymentMode] = useState("Cash");
-  const [amountPaid, setAmountPaid] = useState("");
-  const [taxAmount, setTaxAmount] = useState("");
-  const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<LineDraft[]>([emptyLine(0)]);
   const [error, setError] = useState<string | null>(null);
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<PurchaseFormValues>({
+    resolver: zodResolver(purchaseFormSchema),
+    defaultValues: EMPTY,
+  });
 
   useEffect(() => {
     if (!open) return;
     keyRef.current = 1;
-    setSellerName("");
-    setPoNumber("");
-    setOrderDate(today());
-    setPaymentMode("Cash");
-    setAmountPaid("");
-    setTaxAmount("");
-    setNotes("");
+    reset(EMPTY);
     setLines([emptyLine(0)]);
     setError(null);
-  }, [open]);
+  }, [open, reset]);
 
   const updateLine = (key: number, patch: Partial<LineDraft>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -116,7 +166,7 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
 
   const lineAmount = (l: LineDraft) => (Number(l.quantity) || 0) * (Number(l.rate) || 0);
   const subtotal = lines.reduce((s, l) => s + lineAmount(l), 0);
-  const tax = Number(taxAmount) || 0;
+  const tax = Number(watch("taxAmount")) || 0;
   const grandTotal = subtotal + tax;
 
   const materialOptions = [
@@ -124,52 +174,44 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
     ...(materials ?? []).map((m) => ({ value: m.id, label: m.name, hint: m.unit })),
   ];
 
-  const submit = async () => {
+  const onSubmit = handleSubmit(async (raw) => {
     setError(null);
-    if (!sellerName.trim()) {
-      setError("Enter a seller / vendor name.");
-      return;
-    }
-    const items = [];
+    const values = raw as unknown as PurchaseFormOutput;
+
+    const items: CreatePurchaseInput["items"] = [];
     for (const l of lines) {
-      const desc = l.description.trim();
-      const qty = Number(l.quantity);
-      const rate = Number(l.rate);
-      if (!desc && !l.materialId && !l.quantity && !l.rate) continue;
-      if (!desc) {
-        setError("Each line needs a description.");
-        return;
-      }
-      if (Number.isNaN(qty) || qty <= 0) {
-        setError(`Enter a quantity for "${desc}".`);
-        return;
-      }
-      if (Number.isNaN(rate) || rate < 0) {
-        setError(`Enter a valid rate for "${desc}".`);
-        return;
-      }
-      items.push({
+      // A wholly untouched row is a leftover blank, not an error.
+      if (!l.description.trim() && !l.materialId && !l.quantity && !l.rate) continue;
+      const parsed = lineSchema.safeParse({
         materialId: l.materialId || null,
-        description: desc,
-        quantity: qty,
-        unit: l.unit.trim() || null,
-        rate,
+        description: l.description,
+        quantity: l.quantity,
+        unit: l.unit,
+        rate: l.rate,
       });
+      if (!parsed.success) {
+        const message = parsed.error.issues[0]?.message ?? "Check this line item.";
+        const label = l.description.trim();
+        setError(label ? `${label}: ${message}` : message);
+        return;
+      }
+      items.push(parsed.data);
     }
     if (items.length === 0) {
       setError("Add at least one line item.");
       return;
     }
 
-    const paid = Number(amountPaid) || 0;
+    const paid = values.amountPaid ?? 0;
+    const taxValue = values.taxAmount ?? 0;
     const body: CreatePurchaseInput = {
-      sellerName: sellerName.trim(),
-      poNumber: poNumber.trim() || null,
-      orderDate,
-      notes: notes.trim() || null,
-      taxAmount: tax > 0 ? tax : undefined,
+      sellerName: values.sellerName,
+      poNumber: values.poNumber,
+      orderDate: values.orderDate,
+      notes: values.notes,
+      taxAmount: taxValue > 0 ? taxValue : undefined,
       amountPaid: paid > 0 ? paid : undefined,
-      paymentMode: paymentMode || null,
+      paymentMode: values.paymentMode,
       items,
     };
     try {
@@ -179,7 +221,9 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not create the purchase.");
     }
-  };
+  });
+
+  const busy = isSubmitting || createPurchase.isPending;
 
   return (
     <Modal
@@ -191,41 +235,36 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
       description="Record what was purchased, from whom, and at what price."
       footer={
         <>
-          <Button variant="outline" onClick={onClose} disabled={createPurchase.isPending}>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={createPurchase.isPending}>
-            {createPurchase.isPending ? "Saving…" : "Save purchase"}
+          <Button onClick={onSubmit} disabled={busy}>
+            {busy ? "Saving…" : "Save purchase"}
           </Button>
         </>
       }
     >
-      <div className="space-y-6">
+      <form onSubmit={onSubmit} className="space-y-6" noValidate>
         {/* ── Header ── */}
         <FormSection title="Purchase details">
-          <Field label="Seller / vendor name" htmlFor="po-seller" required>
+          <Field
+            label="Seller / vendor name"
+            htmlFor="po-seller"
+            required
+            error={errors.sellerName?.message}
+          >
             <Input
               id="po-seller"
-              value={sellerName}
-              onChange={(e) => setSellerName(e.target.value)}
               placeholder="Name of the person or shop you bought from"
+              {...register("sellerName")}
             />
           </Field>
           <FormRow columns={2}>
-            <Field label="Purchase date" htmlFor="po-date">
-              <Input
-                id="po-date"
-                type="date"
-                value={orderDate}
-                onChange={(e) => setOrderDate(e.target.value)}
-              />
+            <Field label="Purchase date" htmlFor="po-date" error={errors.orderDate?.message}>
+              <Input id="po-date" type="date" max={today()} {...register("orderDate")} />
             </Field>
-            <Field label="Payment mode" htmlFor="po-paymode">
-              <Select
-                id="po-paymode"
-                value={paymentMode}
-                onChange={(e) => setPaymentMode(e.target.value)}
-              >
+            <Field label="Payment mode" htmlFor="po-paymode" error={errors.paymentMode?.message}>
+              <Select id="po-paymode" {...register("paymentMode")}>
                 {PAYMENT_MODES.map((m) => (
                   <option key={m} value={m}>
                     {m}
@@ -233,23 +272,26 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
                 ))}
               </Select>
             </Field>
-            <Field label="Ref. / Bill no." htmlFor="po-number">
+            <Field label="Ref. / Bill no." htmlFor="po-number" error={errors.poNumber?.message}>
               <Input
                 id="po-number"
-                value={poNumber}
-                onChange={(e) => setPoNumber(e.target.value)}
                 placeholder="Seller's bill or invoice no. (optional)"
+                {...register("poNumber")}
               />
             </Field>
-            <Field label="Amount paid so far (₹)" htmlFor="po-paid">
+            <Field
+              label="Amount paid so far (₹)"
+              htmlFor="po-paid"
+              error={errors.amountPaid?.message}
+            >
               <Input
                 id="po-paid"
                 type="number"
+                inputMode="decimal"
                 min="0"
                 step="any"
-                value={amountPaid}
-                onChange={(e) => setAmountPaid(e.target.value)}
                 placeholder="0 — enter if already paid"
+                {...register("amountPaid")}
               />
             </Field>
           </FormRow>
@@ -295,6 +337,7 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 <Input
                   type="number"
+                  inputMode="decimal"
                   min="0"
                   step="any"
                   value={l.quantity}
@@ -314,6 +357,7 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
                 </datalist>
                 <Input
                   type="number"
+                  inputMode="decimal"
                   min="0"
                   step="any"
                   value={l.rate}
@@ -364,14 +408,19 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
               <span className="text-sm text-muted-foreground">GST / Tax (₹)</span>
               <Input
                 type="number"
+                inputMode="decimal"
                 min="0"
                 step="any"
-                value={taxAmount}
-                onChange={(e) => setTaxAmount(e.target.value)}
                 placeholder="0"
                 className="ml-auto w-24 text-right sm:w-32"
+                {...register("taxAmount")}
               />
             </div>
+            {errors.taxAmount?.message ? (
+              <p className="text-right text-xs font-medium text-danger" role="alert">
+                {errors.taxAmount.message}
+              </p>
+            ) : null}
             <div className="flex justify-between font-semibold">
               <span className="text-sm">Total</span>
               <span className="tabular-nums">₹{grandTotal.toFixed(2)}</span>
@@ -380,12 +429,11 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
         </FormSection>
 
         {/* ── Notes ── */}
-        <Field label="Notes" htmlFor="po-notes">
+        <Field label="Notes" htmlFor="po-notes" error={errors.notes?.message}>
           <Input
             id="po-notes"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
             placeholder="Any additional details (optional)"
+            {...register("notes")}
           />
         </Field>
 
@@ -394,7 +442,7 @@ export function PurchaseFormModal({ open, onClose, onCreated }: PurchaseFormModa
             {error}
           </div>
         ) : null}
-      </div>
+      </form>
     </Modal>
   );
 }

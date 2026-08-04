@@ -29,7 +29,7 @@ Browser/Mobile → Next.js (Vercel) → Hono.js API (Cloudflare Workers)
 
 Three cross-cutting concerns shape almost every feature and span multiple files — internalize them before writing code:
 
-1. **Multi-tenancy (Site = tenant boundary).** Every business table carries a `siteId`. *Every* query must filter by the active site unless the endpoint is explicitly account-level (auth/site list/site create). Hierarchy: `Site → {members, DPR, Attendance, Inventory, Expenses, Purchases, ...}`. An **owner** (`users.is_owner`) holds many sites (`sites.owner_user_id`); the active site is chosen by the client via the **`X-Site-Id` header**. *(Company and Project were removed on 2026-06-07 — see `docs/progress.md`.)*
+1. **Multi-tenancy (Site = tenant boundary).** Every business table carries a `siteId`. *Every* query must filter by the active site unless the endpoint is explicitly account-level (auth/site list/site create). Hierarchy: `Site → {members, DPR, Attendance, Inventory, Expenses, Purchases, ...}`. An **owner** (`users.is_owner`) holds many sites (`sites.owner_user_id`); the active site is chosen by the client via the **`X-Site-Id` header**. Multiple unrelated contractors share one deployment — each is an owner with their own sites, users, and data; nothing is global to all tenants except the `users.email` unique constraint. Site `code` is unique **per owner**, not globally. **`users` is the one business table without a `siteId`** — so any lookup or write on it must be scoped through the acting tenant (`tenantOwnerId` / `resolveTenantUser` in `modules/users`), and must not let an error message reveal that an address belongs to another contractor. Guarded by `pnpm --filter @construction-erp/db check:isolation`. *(Company and Project were removed on 2026-06-07 — see `docs/progress.md`.)*
 2. **Permission-based RBAC (not role-name checks).** A permission is `{ module, action }` (action ∈ `view|create|update|delete|approve|export`). Access is **per-user, per-site**: each `(member, module)` stores one `access_level` (`read` → `view`; `read_write` → all actions), expanded to permissions at load time. The **site owner** has implicit full access to sites they own. The backend must check permission before *every* protected operation; the frontend hides disallowed nav/buttons but is **never** the security boundary.
 3. **Files never proxy through the API.** Uploads use R2 signed URLs: client requests URL → backend validates RBAC + file type/size → client uploads directly to R2 → client confirms → backend stores metadata. DB holds metadata/references; R2 holds bytes. Implemented in `apps/api/src/common/r2` (presigned PUT/GET via `aws4fetch`); DPR photos (`dpr_photos`) are the first consumer. R2 config: `R2_ACCOUNT_ID`/`R2_BUCKET` (vars) + `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` (secrets); the bucket needs a CORS policy allowing browser `PUT`/`GET`.
 
@@ -40,7 +40,11 @@ Three cross-cutting concerns shape almost every feature and span multiple files 
   - Success: `{ "success": true, "data": {}, "meta": {} }`
   - Error: `{ "success": false, "error": { "code", "message", "details" } }`
 - **Errors:** throw custom error classes (`AppError`, `ValidationError`, `AuthorizationError`, `NotFoundError`, `ConflictError`, `RateLimitError`, `IdempotencyError`, `UploadError`, `QueueJobError`, `DatabaseError`). Codes are a **stable, fixed set** (e.g. `VALIDATION_ERROR`, `PERMISSION_DENIED`, `REFRESH_TOKEN_REUSED`, `IDEMPOTENCY_CONFLICT`, `RATE_LIMITED`) — see `docs/errors.md`. The visible `message` must be user-friendly and actionable; internal codes/stack traces stay in logs only.
-- **Validation:** Zod schemas for params, query, body (and response where practical). Never trust raw client input. Share schemas with the frontend where useful.
+- **Validation:** Zod schemas for params, query, body (and response where practical). Never trust raw client input. **The rules live in `packages/shared/src/validation/primitives.ts` and are imported by both apps** — phone (Indian 10-digit), email, real calendar dates, `pastOrTodaySchema`, GSTIN structure, GST state codes, HSN, money/quantity, `PAYMENT_MODES`. Never redefine one locally; a rule that differs between layers is either bypassable with curl or a 400 the user can't act on. API-side `nullable`/`optional` wrappers are in `apps/api/src/common/validation/`; form-side string→number adapters in `apps/web/src/lib/validation/forms.ts`.
+  - **Money and quantity must use `moneySchema()`/`quantitySchema()`, never a bare `z.number()`.** `z.number().positive()` accepts `Infinity`, and `String(Infinity)` is a value Postgres *accepts* for a `numeric` column — it then poisons every later sum on that row irreversibly.
+  - **Cap "amount received/paid" against the document total in the handler**, not just the schema (the ceiling is a property of the row being paid). Guarded on invoices, sales, and purchases.
+  - Keep each zod `.max()` in step with the DB column width — a longer zod max turns a clean 400 into a Postgres 500.
+  - Guarded by `bash scripts/check-validation.sh` (needs a running API + `CHECK_EMAIL`/`CHECK_PASSWORD`).
 - **Transactions are required** for multi-table critical ops: attendance approval → salary generation, inventory inward/outward, purchase receipt → stock update, expense approval → ledger, export job + audit log.
 - **Idempotency keys are required** for: payments, salary generation, inventory stock movements, purchase creation, export generation. Same key + different payload → `IDEMPOTENCY_CONFLICT`.
 - **Soft deletes + audit trails** on business records. Audit log captures actor, tenant, module, action, entity type/id, before/after, request metadata, timestamp — never secrets or sensitive salary/payment data.
@@ -53,7 +57,12 @@ Three cross-cutting concerns shape almost every feature and span multiple files 
 
 ## Frontend conventions (Next.js)
 
-- **Mobile-first** — primary users are site managers/supervisors on low-end phones and weak networks. DPR, attendance, and expense entry must be fast; DPR photos need quick camera upload.
+- **Mobile-first** — primary users are site managers/supervisors on low-end phones and weak networks. DPR, attendance, and expense entry must be fast; DPR photos need quick camera upload. Established conventions (don't re-derive them):
+  - **Touch targets ≥44px on mobile**, denser from `sm` up — `h-11 sm:h-10` (`Button`/`Input`/`Select`), `size-11 sm:size-9` for icon buttons.
+  - **Wide tables get a card fallback**, not just side-scroll: `<ul className="divide-y md:hidden">` + `<div className="hidden md:block">`. Every list page follows this.
+  - **Safe areas**: the viewport is `viewportFit: "cover"`, so anything pinned to a screen edge needs `pt-safe`/`pb-safe-4`/`px-safe-4` (defined in `globals.css` `@layer utilities`) or it lands under the notch/home indicator. `px-safe-4` owns horizontal padding outright — never pair it with `px-*`.
+  - **`dvh`, never `vh`** for viewport-sized elements; `vh` ignores mobile browser chrome and the on-screen keyboard.
+  - **Never gate functionality on hover** — `group-hover` reveals are invisible on touch. Wrap the reveal in `[@media(hover:hover)]:`.
 - **Table-first ERP screens.** Each module follows: list (table + filters + search + sort + actions) → create form/drawer → detail with audit timeline → edit → export (when permitted). Table state maps to URL query params.
 - **TanStack Query** owns all server state; **TanStack Table** for lists. Don't fetch protected ERP data inside deeply nested components — use module hooks (`useProjects`, `useInventoryItems`, `useDprEntries`, …).
 - **React Hook Form + Zod** for forms: disable submit while saving, prevent duplicate submit, show field-level errors.
@@ -62,7 +71,15 @@ Three cross-cutting concerns shape almost every feature and span multiple files 
 
 ## Auth flow (Phase 2 — implemented)
 
-Custom email/password auth (no OAuth, no public signup — decided with the product owner). The first **owner** (`admin@demo.test`) + sample sites + a sample member come from `pnpm db:seed`; the owner provisions everyone else per-site via the Users module with module-wise read/read-write access.
+Custom email/password auth (no OAuth, no public signup — decided with the product owner). A contractor **owner** is provisioned by the platform operator (`seed:provision-demo`, one per contractor); the owner then creates their own sites and provisions everyone else per-site via the Users module with module-wise read/read-write access. `pnpm db:seed` is a **dev-only** seed (sample sites + member) and requires all credentials from env — never run it against a customer DB.
+
+**Three tiers, deliberately separate:**
+
+| Tier | Flag | Means |
+| --- | --- | --- |
+| Platform admin | `users.is_platform_admin` | Operator of the deployment (us). Gates platform ops via `requirePlatformAdmin`. **No implicit tenant data access** — support access requires a real membership, so it stays auditable. Set by hand in the DB; no API grants it. |
+| Contractor owner | `users.is_owner` | A customer. May create/manage their own sites (`requireOwner`). Implicit full access to sites they own. |
+| Member | neither | Per-site, per-module access from `site_member_permissions`. |
 
 - **Tokens:** sign-in issues a short-lived JWT **access token** (15 min, HS256 via `hono/jwt`, secret `JWT_SECRET`; carries only `sub`) + an opaque **refresh token**. The DB (`refresh_tokens`) is the refresh token's source of truth — only its SHA-256 hash is stored. Refresh tokens **rotate on use**; replaying a rotated token triggers **family-wide revocation** (`REFRESH_TOKEN_REUSED`). Logout revokes the active token. The web client keeps both tokens in `localStorage` (+ the active `erp.activeSiteId`); `apiFetch` attaches the Bearer header and `X-Site-Id`, and does a single-flight refresh on `TOKEN_EXPIRED`.
 - **Passwords:** PBKDF2 via Web Crypto in `packages/shared/src/crypto` (`hashPassword`/`verifyPassword`) — isomorphic (Workers/Node/browser), shared by the API and the seed. Never bcrypt/argon2 (no Workers bindings).
@@ -70,7 +87,8 @@ Custom email/password auth (no OAuth, no public signup — decided with the prod
 - **Protecting a route:**
   - **Site-scoped** (most routes): `middleware: [requireAuth, requireSiteContext, requirePermission("users", "create")] as const`. `requireSiteContext` → 400 if no `X-Site-Id`, 403 `SITE_ACCESS_REVOKED` if the sent site isn't accessible. Always filter queries by `auth.siteId`.
   - **Account-level:** `requireAuth` only (e.g. `/auth/me`, `GET /sites`). Site **creation** uses `[requireAuth, requireOwner]` (owner-only).
-  - Read the principal via `c.get("auth")` (`{ userId, siteId, email, name, isOwner, isAppOwner, permissions }`).
+  - **Platform-level:** `[requireAuth, requirePlatformAdmin]` — operator-only actions across tenants. No routes use it yet; it exists so the tier is enforceable when one is added.
+  - Read the principal via `c.get("auth")` (`{ userId, siteId, email, name, isOwner, isAppOwner, isPlatformAdmin, permissions }`).
 - **DB access in handlers:** `getDb(c)` (lazy, per-request Neon Pool). Multi-table writes use `db.transaction(...)`; service helpers accept `DbClient` so they compose inside a tx. Audit mutations with `writeAudit(db, {...})` (never log passwords/tokens).
 - **Rate limiting:** best-effort in-isolate limiter on login/refresh today; KV/Durable-Object-backed limiting is Phase 9. OAuth callbacks/signed-URL/export limits land with those phases.
 - **Frontend:** `AuthProvider`/`useAuth` (`apps/web/src/lib/auth`) expose `user` (`{ …, isAppOwner, sites[] }`), `activeSite`, `login`, `logout`, `switchSite(id)`, and a site-aware `can(module, action)` (owner → always true). `SiteSwitcher` (top bar) sets `erp.activeSiteId` and clears the query cache on switch. `AuthGuard` protects the app shell; nav/buttons are permission-filtered and Sites is owner-only (the backend is still the security boundary).
@@ -112,7 +130,7 @@ pnpm workspaces + Turborepo. Internal packages are consumed as **TypeScript sour
 ```
 apps/web    Next.js 15 (App Router, Tailwind v4, shadcn/ui, TanStack Query) — Vercel
 apps/api    Hono on Cloudflare Workers (@hono/zod-openapi + Swagger UI, Pino) — entry src/index.ts
-packages/shared             response envelope, ERROR_CODES, RBAC constants (modules/actions/access-levels + level→actions expansion), pagination, isomorphic crypto (PBKDF2/token hashing) — used by BOTH apps
+packages/shared             response envelope, ERROR_CODES, RBAC constants (modules/actions/access-levels + level→actions expansion), pagination, isomorphic crypto (PBKDF2/token hashing), **validation primitives** (phone/email/GSTIN/HSN/dates/money — the single source of truth for both layers) — used by BOTH apps
 packages/db                 Drizzle schema + Neon client + idempotent seed (src/seed.ts); tables added per phase to src/schema/
 packages/typescript-config  shared tsconfig bases (base / nextjs / workers)
 ```
@@ -135,7 +153,10 @@ pnpm check                                      # Biome lint + format (auto-fix)
 pnpm build                                      # next build + wrangler dry-run bundle
 pnpm db:generate                                # generate a migration from schema (offline, no DB)
 pnpm db:migrate                                 # apply migrations (needs DATABASE_URL)
-pnpm db:seed                                     # seed first company + admin + default roles (idempotent; needs DATABASE_URL)
+pnpm db:seed                                     # DEV-ONLY seed: sample sites + member (needs DATABASE_URL + SEED_* credentials; no defaults)
+pnpm --filter @construction-erp/db seed:provision-demo   # provision ONE contractor-owner (DEMO_EMAIL/DEMO_PASSWORD/DEMO_NAME required)
+pnpm --filter @construction-erp/db check:isolation       # live cross-tenant isolation check (needs `wrangler dev` running)
+CHECK_EMAIL=... CHECK_PASSWORD=... bash scripts/check-validation.sh   # live validation checks (needs `wrangler dev` running)
 ```
 
 To verify the API runtime: `wrangler dev` then `curl localhost:8787/health` (returns the success envelope; no DB needed). Lint/format is **Biome** (`biome.json`) — there is no ESLint/Prettier.

@@ -21,8 +21,20 @@ import {
 import { type PurchaseDetail, usePurchases } from "@/lib/hooks/use-purchases";
 import { type SiteSale, useSales } from "@/lib/hooks/use-selling";
 import { cn } from "@/lib/utils";
+import {
+  PAYMENT_MODES,
+  dateSchema,
+  gstinSchema,
+  hsnSchema,
+  moneySchema,
+  phoneSchema,
+  quantitySchema,
+  stateCodeSchema,
+  today,
+} from "@construction-erp/shared";
 import { FileText, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { z } from "zod";
 
 /** GST state/UT codes (used to auto-decide intra- vs inter-state tax). */
 const GST_STATES: { code: string; name: string }[] = [
@@ -66,10 +78,7 @@ const GST_STATES: { code: string; name: string }[] = [
 const stateName = (code: string) => GST_STATES.find((s) => s.code === code)?.name ?? "";
 
 const GST_RATES = ["0", "5", "12", "18", "28"];
-const PAYMENT_MODES = ["Cash", "UPI", "Bank transfer", "Cheque"];
 const DEFAULT_SELLER_STATE = "24"; // Gujarat
-
-const today = () => new Date().toISOString().slice(0, 10);
 
 interface LineDraft {
   id: string;
@@ -97,6 +106,77 @@ function toNum(s: string): number {
   const n = Number(s);
   return Number.isFinite(n) ? n : 0;
 }
+
+/**
+ * One labelled cell in the line-item grid. The label is what makes a filled row
+ * legible on a phone (placeholders disappear the moment a value is typed); from
+ * `lg` up the row is wide enough that it becomes noise, so it's hidden there.
+ */
+function LineField({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={cn("min-w-0", className)}>
+      <span className="mb-1 block text-[11px] font-medium text-muted-foreground lg:hidden">
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Mirrors the API's invoice body rules so a bad GSTIN, HSN, or over-payment is
+ * caught in the browser with an inline message instead of a 400. `grandTotal` is
+ * passed in (not a real body field) purely so the received-amount cap — the same
+ * one the server enforces — can be checked here too.
+ */
+const invoiceSubmitSchema = z
+  .object({
+    invoiceDate: dateSchema,
+    dueDate: z.string().nullable().optional(),
+    buyerName: z.string().trim().min(1, "Enter the buyer's name.").max(200),
+    buyerGstin: z.union([z.null(), gstinSchema]),
+    buyerStateCode: z.union([z.null(), stateCodeSchema]),
+    buyerContact: z.union([z.null(), phoneSchema]),
+    sellerGstin: z.union([z.null(), gstinSchema]),
+    sellerStateCode: z.union([z.null(), stateCodeSchema]),
+    amountReceived: z.number().optional(),
+    grandTotal: z.number(),
+    items: z
+      .array(
+        z.object({
+          description: z.string().trim().min(1).max(200),
+          hsnCode: z.union([z.null(), hsnSchema]),
+          quantity: quantitySchema(),
+          rate: moneySchema(),
+        }),
+      )
+      .min(1, "Add at least one line item.")
+      .max(200, "An invoice can have at most 200 line items."),
+  })
+  .superRefine((v, ctx) => {
+    if (v.dueDate && v.dueDate < v.invoiceDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "The due date cannot be before the invoice date.",
+        path: ["dueDate"],
+      });
+    }
+    if (v.amountReceived != null && v.amountReceived > v.grandTotal) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "The amount received cannot exceed the invoice total.",
+        path: ["amountReceived"],
+      });
+    }
+  });
 
 type PrefillSource = "" | "sale" | "purchase";
 
@@ -187,12 +267,15 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
   const [paymentMode, setPaymentMode] = useState("Cash");
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
   const [error, setError] = useState<string | null>(null);
+  /** Per-field messages from the submit-time validation, keyed by field name. */
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [prefillSource, setPrefillSource] = useState<PrefillSource>("");
   const [prefillNote, setPrefillNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setFieldErrors({});
     setPrefillSource("");
     setPrefillNote(null);
     setInvoiceType(invoice?.invoiceType ?? "tax");
@@ -306,8 +389,9 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
 
   const submit = async () => {
     setError(null);
+    setFieldErrors({});
     if (!buyerName.trim()) {
-      setError("Enter the buyer's name.");
+      setFieldErrors({ buyerName: "Enter the buyer's name." });
       return;
     }
     const items: InvoiceItemInput[] = [];
@@ -352,11 +436,33 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
       items,
     };
 
+    const received = toNum(amountReceived);
+
+    // Validate the assembled body against the same rules the API applies, so a
+    // bad GSTIN or HSN is caught here with an inline message rather than coming
+    // back as a 400. This form keeps its own state (prefill-from-sale, live
+    // totals, and the dynamic line array all depend on it), so it validates at
+    // submit rather than field-by-field through react-hook-form.
+    const parsed = invoiceSubmitSchema.safeParse({
+      ...base,
+      amountReceived: received > 0 ? received : undefined,
+      grandTotal: totals.grandTotal,
+    });
+    if (!parsed.success) {
+      const next: Record<string, string> = {};
+      for (const issue of parsed.error.issues) {
+        const key = issue.path.join(".");
+        if (key && !next[key]) next[key] = issue.message;
+      }
+      setFieldErrors(next);
+      setError(parsed.error.issues[0]?.message ?? "Check the highlighted fields.");
+      return;
+    }
+
     try {
       if (isEdit && invoice) {
         await updateInvoice.mutateAsync({ id: invoice.id, body: base });
       } else {
-        const received = toNum(amountReceived);
         const body: CreateInvoiceInput = {
           invoiceType,
           ...base,
@@ -406,7 +512,7 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
               disabled={isEdit}
               onClick={() => setInvoiceType(t)}
               className={cn(
-                "flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors disabled:opacity-60",
+                "h-11 flex-1 rounded-lg border px-3 text-sm font-medium transition-colors disabled:opacity-60 sm:h-10",
                 invoiceType === t
                   ? "border-primary bg-primary/10 text-primary"
                   : "border-border text-muted-foreground hover:bg-accent",
@@ -457,7 +563,7 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
         ) : null}
 
         <FormRow columns={2}>
-          <Field label="Invoice date" htmlFor="inv-date">
+          <Field label="Invoice date" htmlFor="inv-date" error={fieldErrors.invoiceDate}>
             <Input
               id="inv-date"
               type="date"
@@ -465,7 +571,7 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
               onChange={(e) => setInvoiceDate(e.target.value)}
             />
           </Field>
-          <Field label="Due date" htmlFor="inv-due">
+          <Field label="Due date" htmlFor="inv-due" error={fieldErrors.dueDate}>
             <Input
               id="inv-due"
               type="date"
@@ -477,7 +583,7 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
 
         <FormSection title="Bill to (buyer)">
           <FormRow columns={2}>
-            <Field label="Buyer name" htmlFor="inv-buyer" required>
+            <Field label="Buyer name" htmlFor="inv-buyer" required error={fieldErrors.buyerName}>
               <Input
                 id="inv-buyer"
                 value={buyerName}
@@ -501,7 +607,12 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
           </FormRow>
           <FormRow columns={2}>
             {isTax ? (
-              <Field label="Buyer GSTIN" htmlFor="inv-buyer-gstin" hint="15 characters (optional)">
+              <Field
+                label="Buyer GSTIN"
+                htmlFor="inv-buyer-gstin"
+                hint="15 characters (optional)"
+                error={fieldErrors.buyerGstin}
+              >
                 <Input
                   id="inv-buyer-gstin"
                   value={buyerGstin}
@@ -511,7 +622,11 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
                 />
               </Field>
             ) : null}
-            <Field label="Buyer contact" htmlFor="inv-buyer-contact">
+            <Field
+              label="Buyer contact"
+              htmlFor="inv-buyer-contact"
+              error={fieldErrors.buyerContact}
+            >
               <Input
                 id="inv-buyer-contact"
                 value={buyerContact}
@@ -563,65 +678,86 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
                       onClick={() => removeLine(i)}
                       disabled={lines.length === 1}
                       aria-label="Remove line"
-                      className="mt-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger disabled:opacity-40"
+                      className="flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger disabled:opacity-40 sm:size-9"
                     >
                       <Trash2 className="size-4" />
                     </button>
                   </div>
+                  {/* Each field keeps a visible label rather than relying on its
+                      placeholder: once a row has values the placeholders are gone,
+                      and a 2-up grid of bare numbers on a phone is unreadable.
+                      Labels collapse away from `lg` up, where the 5/6-column row
+                      is wide enough for the header row to do that job. */}
                   <div
                     className={cn(
-                      "grid gap-2",
+                      "grid gap-x-2 gap-y-2.5",
                       isTax
                         ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-6"
                         : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5",
                     )}
                   >
-                    <Input
-                      aria-label="HSN/SAC"
-                      value={l.hsnCode}
-                      onChange={(e) => setLine(i, { hsnCode: e.target.value })}
-                      placeholder="HSN/SAC"
-                    />
-                    <Input
-                      aria-label="Quantity"
-                      type="number"
-                      min="0"
-                      step="any"
-                      value={l.quantity}
-                      onChange={(e) => setLine(i, { quantity: e.target.value })}
-                      placeholder="Qty"
-                    />
-                    <Input
-                      aria-label="Unit"
-                      value={l.unit}
-                      onChange={(e) => setLine(i, { unit: e.target.value })}
-                      placeholder="Unit"
-                    />
-                    <Input
-                      aria-label="Rate"
-                      type="number"
-                      min="0"
-                      step="any"
-                      value={l.rate}
-                      onChange={(e) => setLine(i, { rate: e.target.value })}
-                      placeholder="Rate ₹"
-                    />
+                    <LineField label="HSN/SAC">
+                      <Input
+                        aria-label="HSN/SAC"
+                        value={l.hsnCode}
+                        onChange={(e) => setLine(i, { hsnCode: e.target.value })}
+                        placeholder="HSN/SAC"
+                      />
+                    </LineField>
+                    <LineField label="Qty">
+                      <Input
+                        aria-label="Quantity"
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="any"
+                        value={l.quantity}
+                        onChange={(e) => setLine(i, { quantity: e.target.value })}
+                        placeholder="Qty"
+                      />
+                    </LineField>
+                    <LineField label="Unit">
+                      <Input
+                        aria-label="Unit"
+                        value={l.unit}
+                        onChange={(e) => setLine(i, { unit: e.target.value })}
+                        placeholder="Unit"
+                      />
+                    </LineField>
+                    <LineField label="Rate ₹">
+                      <Input
+                        aria-label="Rate"
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="any"
+                        value={l.rate}
+                        onChange={(e) => setLine(i, { rate: e.target.value })}
+                        placeholder="Rate ₹"
+                      />
+                    </LineField>
                     {isTax ? (
-                      <Select
-                        aria-label="GST rate"
-                        value={l.gstRate}
-                        onChange={(e) => setLine(i, { gstRate: e.target.value })}
-                      >
-                        {GST_RATES.map((r) => (
-                          <option key={r} value={r}>
-                            {r}% GST
-                          </option>
-                        ))}
-                      </Select>
+                      <LineField label="GST">
+                        <Select
+                          aria-label="GST rate"
+                          value={l.gstRate}
+                          onChange={(e) => setLine(i, { gstRate: e.target.value })}
+                        >
+                          {GST_RATES.map((r) => (
+                            <option key={r} value={r}>
+                              {r}% GST
+                            </option>
+                          ))}
+                        </Select>
+                      </LineField>
                     ) : null}
-                    <div className="flex items-center justify-end rounded-md bg-card px-2 text-sm font-medium tabular-nums">
-                      {formatINR(lineTotals.grandTotal)}
-                    </div>
+                    {/* Line total spans the full width on mobile so it reads as the
+                        row's result rather than as one more input-sized cell. */}
+                    <LineField label="Line total" className="col-span-full lg:col-span-1">
+                      <div className="flex h-11 items-center justify-end rounded-md bg-card px-2.5 text-sm font-medium tabular-nums sm:h-10">
+                        {formatINR(lineTotals.grandTotal)}
+                      </div>
+                    </LineField>
                   </div>
                 </div>
               );
@@ -705,7 +841,7 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
             </Field>
           </FormRow>
           {isTax ? (
-            <Field label="Your GSTIN" htmlFor="inv-seller-gstin">
+            <Field label="Your GSTIN" htmlFor="inv-seller-gstin" error={fieldErrors.sellerGstin}>
               <Input
                 id="inv-seller-gstin"
                 value={sellerGstin}
@@ -725,13 +861,15 @@ export function InvoiceFormModal({ open, onClose, invoice }: InvoiceFormModalPro
           </Field>
         </FormSection>
 
+        {/* The label is the tap target, so it carries the 44px height — the
+            native checkbox stays 16px (resizing it fights the OS control). */}
         {isTax ? (
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-sm sm:min-h-0">
             <input
               type="checkbox"
               checked={reverseCharge}
               onChange={(e) => setReverseCharge(e.target.checked)}
-              className="size-4 rounded border-border"
+              className="size-4 shrink-0 rounded border-border"
             />
             Tax payable under reverse charge
           </label>

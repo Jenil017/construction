@@ -115,8 +115,55 @@ export function InvoiceDetailModal({
           ]}
         />
 
-        {/* Line items */}
-        <div className="overflow-x-auto rounded-lg border">
+        {/* Line items — cards on mobile, table from `md` up. A 34rem-wide table
+            inside a `max-w-2xl` modal can only ever be side-scrolled on a phone,
+            which is the one place in the app that still forced that. Mirrors the
+            `<ul className="md:hidden">` / `<div className="hidden md:block">`
+            split used by every list page. */}
+        <ul className="divide-y rounded-lg border md:hidden">
+          {invoice.items.map((it) => (
+            <li key={it.id} className="space-y-1.5 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium wrap-break-word">{it.description}</p>
+                  {it.hsnCode ? (
+                    <p className="text-xs text-muted-foreground">HSN/SAC: {it.hsnCode}</p>
+                  ) : null}
+                </div>
+                <span className="shrink-0 text-sm font-medium tabular-nums">
+                  {formatINR(it.lineTotal)}
+                </span>
+              </div>
+              <dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                <div className="flex gap-1">
+                  <dt>Qty</dt>
+                  <dd className="tabular-nums text-foreground">
+                    {it.quantity}
+                    {it.unit ? ` ${it.unit}` : ""}
+                  </dd>
+                </div>
+                <div className="flex gap-1">
+                  <dt>Rate</dt>
+                  <dd className="tabular-nums text-foreground">{formatINR(it.rate)}</dd>
+                </div>
+                <div className="flex gap-1">
+                  <dt>Taxable</dt>
+                  <dd className="tabular-nums text-foreground">{formatINR(it.taxableValue)}</dd>
+                </div>
+                {isTax ? (
+                  <div className="flex gap-1">
+                    <dt>GST</dt>
+                    <dd className="tabular-nums text-foreground">
+                      {it.gstRate ? `${it.gstRate}%` : "—"}
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
+            </li>
+          ))}
+        </ul>
+
+        <div className="hidden overflow-x-auto rounded-lg border md:block">
           <table className={cn("w-full text-sm", isTax ? "min-w-[34rem]" : "min-w-[28rem]")}>
             <thead className="bg-muted/40 text-xs text-muted-foreground">
               <tr>

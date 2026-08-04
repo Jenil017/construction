@@ -1,9 +1,15 @@
-import { paginationQuerySchema } from "@construction-erp/shared";
+import {
+  dateSchema,
+  moneySchema,
+  paginationQuerySchema,
+  pastOrTodaySchema,
+  searchSchema,
+} from "@construction-erp/shared";
 import { z } from "@hono/zod-openapi";
+import { nullablePhone, nullableText, requiredText } from "../../common/validation";
 
 /** Attendance status for a worker on a day. */
 export const ATTENDANCE_STATUSES = ["present", "absent", "half_day"] as const;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const personSchema = z.object({ id: z.string().uuid(), name: z.string() });
 
@@ -13,7 +19,7 @@ export const workerCategorySchema = z
   .openapi("WorkerCategory");
 
 export const createWorkerCategoryBodySchema = z
-  .object({ name: z.string().min(1).max(80) })
+  .object({ name: requiredText(80) })
   .openapi("CreateWorkerCategoryRequest");
 
 // ─── Workers ───────────────────────────────────────────────────────────────────
@@ -42,31 +48,31 @@ export const workerSchema = z
   .openapi("Worker");
 
 const workerFields = {
-  phone: z.string().max(20).nullable().optional(),
+  phone: nullablePhone,
   categoryId: z.string().uuid().nullable().optional(),
-  trade: z.string().max(80).nullable().optional(),
-  overtimeRate: z.number().nonnegative().nullable().optional(),
-  notes: z.string().max(2000).nullable().optional(),
+  trade: nullableText(80),
+  overtimeRate: moneySchema().nullable().optional(),
+  notes: nullableText(2000),
 };
 
 export const createWorkerBodySchema = z
   .object({
-    name: z.string().min(1).max(160),
-    dailyWage: z.number().nonnegative(),
+    name: requiredText(160),
+    dailyWage: moneySchema(),
     ...workerFields,
   })
   .openapi("CreateWorkerRequest");
 
 export const updateWorkerBodySchema = z
   .object({
-    name: z.string().min(1).max(160).optional(),
-    dailyWage: z.number().nonnegative().optional(),
+    name: requiredText(160).optional(),
+    dailyWage: moneySchema().optional(),
     ...workerFields,
   })
   .openapi("UpdateWorkerRequest");
 
 export const listWorkersQuerySchema = paginationQuerySchema.extend({
-  search: z.string().optional().openapi({ description: "Match name, phone, or category." }),
+  search: searchSchema.openapi({ description: "Match name, phone, or category." }),
 });
 
 // ─── Attendance ──────────────────────────────────────────────────────────────────
@@ -87,25 +93,30 @@ export const attendanceSchema = z
   })
   .openapi("Attendance");
 
-export const listAttendanceQuerySchema = paginationQuerySchema.extend({
-  date: z.string().regex(DATE_RE).optional().openapi({ description: "A single day (YYYY-MM-DD)." }),
-  dateFrom: z.string().regex(DATE_RE).optional(),
-  dateTo: z.string().regex(DATE_RE).optional(),
-  workerId: z.string().uuid().optional(),
-  status: z.enum(ATTENDANCE_STATUSES).optional(),
-  approved: z.enum(["true", "false"]).optional(),
-});
+export const listAttendanceQuerySchema = paginationQuerySchema
+  .extend({
+    date: dateSchema.optional().openapi({ description: "A single day (YYYY-MM-DD)." }),
+    dateFrom: dateSchema.optional(),
+    dateTo: dateSchema.optional(),
+    workerId: z.string().uuid().optional(),
+    status: z.enum(ATTENDANCE_STATUSES).optional(),
+    approved: z.enum(["true", "false"]).optional(),
+  })
+  .refine((q) => !q.dateFrom || !q.dateTo || q.dateFrom <= q.dateTo, {
+    message: "The start date must be before the end date.",
+    path: ["dateTo"],
+  });
 
 const markEntrySchema = z.object({
   workerId: z.string().uuid(),
   status: z.enum(ATTENDANCE_STATUSES),
-  overtimeHours: z.number().nonnegative().max(24).optional(),
-  note: z.string().max(200).nullable().optional(),
+  overtimeHours: z.number().finite().nonnegative().max(24).optional(),
+  note: nullableText(200),
 });
 
 export const markAttendanceBodySchema = z
   .object({
-    date: z.string().regex(DATE_RE),
+    date: pastOrTodaySchema,
     entries: z.array(markEntrySchema).min(1).max(500),
   })
   .openapi("MarkAttendanceRequest");
@@ -119,7 +130,7 @@ export const markAttendanceResultSchema = z
   .openapi("MarkAttendanceResult");
 
 export const approveAttendanceBodySchema = z
-  .object({ date: z.string().regex(DATE_RE) })
+  .object({ date: pastOrTodaySchema })
   .openapi("ApproveAttendanceRequest");
 
 export const approveAttendanceResultSchema = z

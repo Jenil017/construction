@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Field } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
@@ -12,9 +13,13 @@ import {
   useCreateUser,
   useUpdateUser,
 } from "@/lib/hooks/use-users";
-import type { AccessLevel, RbacModule } from "@construction-erp/shared";
+import { optionalStringMax, requiredString } from "@/lib/validation/forms";
+import { type AccessLevel, type RbacModule, emailSchema } from "@construction-erp/shared";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { UserPlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 interface UserFormModalProps {
   open: boolean;
@@ -73,39 +78,60 @@ function emptyGrid(): Record<string, Grant> {
   return Object.fromEntries(ALL_MODULES.map((m) => [m, "none"]));
 }
 
+const passwordSchema = z.string().min(8, "Use at least 8 characters.").max(100);
+
+/**
+ * Password is required when creating a user but optional on edit ("leave blank
+ * to keep"), and email is locked on edit — so the schema depends on the mode.
+ * Maxes mirror `users.schemas.ts`.
+ */
+function buildSchema(isEdit: boolean) {
+  return z.object({
+    name: requiredString(120, "Name is required."),
+    email: isEdit ? z.string() : emailSchema,
+    password: isEdit ? z.union([z.literal(""), passwordSchema]) : passwordSchema,
+    phone: optionalStringMax(20),
+  });
+}
+
+type UserFormValues = z.input<ReturnType<typeof buildSchema>>;
+
+const EMPTY: UserFormValues = { name: "", email: "", password: "", phone: "" };
+
 export function UserFormModal({ open, onClose, user }: UserFormModalProps) {
   const isEdit = !!user;
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
 
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [phone, setPhone] = useState("");
   const [status, setStatus] = useState<"active" | "disabled">("active");
   const [grid, setGrid] = useState<Record<string, Grant>>(emptyGrid);
   const [error, setError] = useState<string | null>(null);
 
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<UserFormValues>({
+    resolver: zodResolver(buildSchema(isEdit)),
+    defaultValues: EMPTY,
+  });
+
   useEffect(() => {
     if (!open) return;
     setError(null);
-    setPassword("");
     if (user) {
-      setName(user.name);
-      setEmail(user.email);
-      setPhone(user.phone ?? "");
+      reset({ name: user.name, email: user.email, password: "", phone: user.phone ?? "" });
       setStatus(user.status === "disabled" ? "disabled" : "active");
       const next = emptyGrid();
       for (const p of user.permissions) next[p.module] = p.level;
       setGrid(next);
     } else {
-      setName("");
-      setEmail("");
-      setPhone("");
+      reset(EMPTY);
       setStatus("active");
       setGrid(emptyGrid());
     }
-  }, [open, user]);
+  }, [open, user, reset]);
 
   const setGrant = (module: string, grant: Grant) =>
     setGrid((prev) => ({ ...prev, [module]: grant }));
@@ -119,41 +145,36 @@ export function UserFormModal({ open, onClose, user }: UserFormModalProps) {
     [grid],
   );
 
-  const submit = async () => {
+  const onSubmit = handleSubmit(async (raw) => {
     setError(null);
-    if (!name.trim()) {
-      setError("Name is required.");
-      return;
-    }
-    if (!isEdit) {
-      if (!email.trim()) {
-        setError("Email is required.");
-        return;
-      }
-      if (password.length < 8) {
-        setError("Password must be at least 8 characters.");
-        return;
-      }
-    } else if (password && password.length < 8) {
-      setError("Password must be at least 8 characters.");
-      return;
-    }
+    // The access grid lives outside the form, so it is still checked by hand.
     if (permissions.length === 0) {
       setError("Grant access to at least one module.");
       return;
     }
+    const values = raw as unknown as {
+      name: string;
+      email: string;
+      password: string;
+      phone: string | null;
+    };
 
     try {
       if (isEdit && user) {
-        const body: UpdateUserInput = { name, phone: phone || null, status, permissions };
-        if (password) body.password = password;
+        const body: UpdateUserInput = {
+          name: values.name,
+          phone: values.phone,
+          status,
+          permissions,
+        };
+        if (values.password) body.password = values.password;
         await updateUser.mutateAsync({ id: user.id, body });
       } else {
         await createUser.mutateAsync({
-          name,
-          email: email.trim(),
-          password,
-          phone: phone || undefined,
+          name: values.name,
+          email: values.email,
+          password: values.password,
+          phone: values.phone ?? undefined,
           permissions,
         });
       }
@@ -161,9 +182,9 @@ export function UserFormModal({ open, onClose, user }: UserFormModalProps) {
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not save the member.");
     }
-  };
+  });
 
-  const saving = createUser.isPending || updateUser.isPending;
+  const saving = isSubmitting || createUser.isPending || updateUser.isPending;
 
   return (
     <Modal
@@ -180,48 +201,43 @@ export function UserFormModal({ open, onClose, user }: UserFormModalProps) {
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={saving}>
+          <Button onClick={onSubmit} disabled={saving}>
             {saving ? "Saving…" : "Save"}
           </Button>
         </>
       }
     >
-      <div className="space-y-4">
+      <form onSubmit={onSubmit} className="space-y-4" noValidate>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="user-name">Name</Label>
-            <Input id="user-name" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="user-email">Email</Label>
-            <Input
-              id="user-email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={isEdit}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="user-phone">Phone</Label>
+          <Field label="Name" htmlFor="user-name" required error={errors.name?.message}>
+            <Input id="user-name" {...register("name")} />
+          </Field>
+          <Field label="Email" htmlFor="user-email" required error={errors.email?.message}>
+            <Input id="user-email" type="email" disabled={isEdit} {...register("email")} />
+          </Field>
+          <Field label="Phone" htmlFor="user-phone" error={errors.phone?.message}>
             <Input
               id="user-phone"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              type="tel"
+              inputMode="numeric"
               placeholder="Optional"
+              {...register("phone")}
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="user-password">{isEdit ? "New password" : "Password"}</Label>
+          </Field>
+          <Field
+            label={isEdit ? "New password" : "Password"}
+            htmlFor="user-password"
+            required={!isEdit}
+            error={errors.password?.message}
+          >
             <Input
               id="user-password"
               type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
               placeholder={isEdit ? "Leave blank to keep" : "Min 8 characters"}
               autoComplete="new-password"
+              {...register("password")}
             />
-          </div>
+          </Field>
         </div>
 
         {!isEdit ? (
@@ -262,7 +278,7 @@ export function UserFormModal({ open, onClose, user }: UserFormModalProps) {
                   key={p.key}
                   type="button"
                   onClick={() => setGrid(p.build())}
-                  className="rounded-md border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent"
+                  className="flex h-9 items-center rounded-md border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent sm:h-7"
                 >
                   {p.label}
                 </button>
@@ -276,25 +292,30 @@ export function UserFormModal({ open, onClose, user }: UserFormModalProps) {
                 className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
               >
                 <span className="text-sm">{label}</span>
+                {/* 3-up segmented control on mobile. `h-10` keeps the tap target
+                    usable at ~100px-wide cells; the short "Write" label avoids the
+                    two-line wrap that "Read & Write" causes at that width. */}
                 <div className="grid w-full grid-cols-3 gap-1 sm:flex sm:w-auto sm:justify-end">
                   {(
                     [
-                      ["none", "None"],
-                      ["read", "Read"],
-                      ["read_write", "Read & Write"],
+                      ["none", "None", "None"],
+                      ["read", "Read", "Read"],
+                      ["read_write", "Write", "Read & Write"],
                     ] as const
-                  ).map(([value, lbl]) => (
+                  ).map(([value, shortLabel, fullLabel]) => (
                     <button
                       key={value}
                       type="button"
                       onClick={() => setGrant(module, value)}
-                      className={`rounded-md border px-2 py-1.5 text-xs transition-colors ${
+                      aria-label={fullLabel}
+                      className={`flex h-10 items-center justify-center rounded-md border px-2 text-xs transition-colors sm:h-8 ${
                         grid[module] === value
                           ? "border-primary bg-primary/10 text-primary"
                           : "text-muted-foreground hover:bg-accent"
                       }`}
                     >
-                      {lbl}
+                      <span className="sm:hidden">{shortLabel}</span>
+                      <span className="hidden sm:inline">{fullLabel}</span>
                     </button>
                   ))}
                 </div>
@@ -306,7 +327,7 @@ export function UserFormModal({ open, onClose, user }: UserFormModalProps) {
         {error ? (
           <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
         ) : null}
-      </div>
+      </form>
     </Modal>
   );
 }

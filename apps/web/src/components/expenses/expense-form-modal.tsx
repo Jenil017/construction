@@ -13,8 +13,13 @@ import {
   useCreateExpense,
   useUpdateExpense,
 } from "@/lib/hooks/use-expenses";
+import { formMoney, optionalStringMax, requiredString } from "@/lib/validation/forms";
+import { PAYMENT_MODES, pastOrTodayOrBlankSchema, today } from "@construction-erp/shared";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Receipt } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 interface ExpenseFormModalProps {
   open: boolean;
@@ -22,7 +27,6 @@ interface ExpenseFormModalProps {
   expense?: Expense | null;
 }
 
-const MODES = ["Cash", "UPI", "Bank transfer", "Cheque"];
 const CATEGORIES = [
   // Site operations
   "Fuel",
@@ -50,56 +54,69 @@ const CATEGORIES = [
   "Miscellaneous",
 ];
 
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+/** Mirrors the API's expense schema (`createExpenseBodySchema`); maxes track the DB columns. */
+const expenseFormSchema = z.object({
+  expenseDate: pastOrTodayOrBlankSchema,
+  amount: formMoney({ allowZero: false }),
+  category: requiredString(80, "Category is required."),
+  paymentMode: z.enum(PAYMENT_MODES),
+  paidTo: optionalStringMax(160),
+  description: optionalStringMax(300),
+  isPettyCash: z.boolean(),
+});
+
+/** The raw form values are all strings; the schema output is what the API takes. */
+type ExpenseFormValues = z.input<typeof expenseFormSchema>;
+
+const EMPTY: ExpenseFormValues = {
+  expenseDate: today(),
+  amount: "",
+  category: "",
+  paymentMode: "Cash",
+  paidTo: "",
+  description: "",
+  isPettyCash: false,
+};
 
 export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalProps) {
   const isEdit = !!expense;
   const createExpense = useCreateExpense();
   const updateExpense = useUpdateExpense();
-
-  const [expenseDate, setExpenseDate] = useState(today());
-  const [category, setCategory] = useState("");
-  const [amount, setAmount] = useState("");
-  const [paidTo, setPaidTo] = useState("");
-  const [paymentMode, setPaymentMode] = useState("Cash");
-  const [isPettyCash, setIsPettyCash] = useState(false);
-  const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<ExpenseFormValues>({
+    resolver: zodResolver(expenseFormSchema),
+    defaultValues: EMPTY,
+  });
 
   useEffect(() => {
     if (!open) return;
     setError(null);
-    setExpenseDate(expense?.expenseDate ?? today());
-    setCategory(expense?.category ?? "");
-    setAmount(expense?.amount != null ? String(expense.amount) : "");
-    setPaidTo(expense?.paidTo ?? "");
-    setPaymentMode(expense?.paymentMode ?? "Cash");
-    setIsPettyCash(expense?.isPettyCash ?? false);
-    setDescription(expense?.description ?? "");
-  }, [open, expense]);
+    reset(
+      expense
+        ? {
+            expenseDate: expense.expenseDate,
+            amount: String(expense.amount),
+            category: expense.category,
+            paymentMode: (PAYMENT_MODES.find((m) => m === expense.paymentMode) ??
+              "Cash") as ExpenseFormValues["paymentMode"],
+            paidTo: expense.paidTo ?? "",
+            description: expense.description ?? "",
+            isPettyCash: expense.isPettyCash,
+          }
+        : EMPTY,
+    );
+  }, [open, expense, reset]);
 
-  const submit = async () => {
+  const onSubmit = handleSubmit(async (values) => {
     setError(null);
-    if (!category.trim()) {
-      setError("Category is required.");
-      return;
-    }
-    const amt = Number(amount.trim());
-    if (!amount.trim() || Number.isNaN(amt) || amt <= 0) {
-      setError("Enter an amount greater than zero.");
-      return;
-    }
-    const body: CreateExpenseInput & UpdateExpenseInput = {
-      expenseDate,
-      category: category.trim(),
-      amount: amt,
-      paidTo: paidTo.trim() || null,
-      paymentMode,
-      isPettyCash,
-      description: description.trim() || null,
-    };
+    // `values` is the schema *output*: trimmed, coerced, "" already mapped to null.
+    const body = values as unknown as CreateExpenseInput & UpdateExpenseInput;
     try {
       if (isEdit && expense) await updateExpense.mutateAsync({ id: expense.id, body });
       else await createExpense.mutateAsync(body);
@@ -107,9 +124,9 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not save the expense.");
     }
-  };
+  });
 
-  const busy = createExpense.isPending || updateExpense.isPending;
+  const busy = isSubmitting || createExpense.isPending || updateExpense.isPending;
 
   return (
     <Modal
@@ -123,43 +140,36 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
           <Button variant="outline" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={busy}>
+          <Button onClick={onSubmit} disabled={busy}>
             {busy ? "Saving…" : "Save"}
           </Button>
         </>
       }
     >
-      <div className="space-y-4">
+      <form onSubmit={onSubmit} className="space-y-4" noValidate>
         <FormRow columns={2}>
-          <Field label="Date" htmlFor="exp-date">
-            <Input
-              id="exp-date"
-              type="date"
-              max={today()}
-              value={expenseDate}
-              onChange={(e) => setExpenseDate(e.target.value)}
-            />
+          <Field label="Date" htmlFor="exp-date" error={errors.expenseDate?.message}>
+            <Input id="exp-date" type="date" max={today()} {...register("expenseDate")} />
           </Field>
-          <Field label="Amount (₹)" htmlFor="exp-amount" required>
+          <Field label="Amount (₹)" htmlFor="exp-amount" required error={errors.amount?.message}>
             <Input
               id="exp-amount"
               type="number"
+              inputMode="decimal"
               min="0"
               step="any"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
               placeholder="e.g. 1500"
+              {...register("amount")}
             />
           </Field>
         </FormRow>
         <FormRow columns={2}>
-          <Field label="Category" htmlFor="exp-category" required>
+          <Field label="Category" htmlFor="exp-category" required error={errors.category?.message}>
             <Input
               id="exp-category"
               list="exp-categories"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
               placeholder="Fuel, Food, Transport…"
+              {...register("category")}
             />
             <datalist id="exp-categories">
               {CATEGORIES.map((cat) => (
@@ -167,13 +177,9 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
               ))}
             </datalist>
           </Field>
-          <Field label="Payment mode" htmlFor="exp-mode">
-            <Select
-              id="exp-mode"
-              value={paymentMode}
-              onChange={(e) => setPaymentMode(e.target.value)}
-            >
-              {MODES.map((m) => (
+          <Field label="Payment mode" htmlFor="exp-mode" error={errors.paymentMode?.message}>
+            <Select id="exp-mode" {...register("paymentMode")}>
+              {PAYMENT_MODES.map((m) => (
                 <option key={m} value={m}>
                   {m}
                 </option>
@@ -181,30 +187,15 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
             </Select>
           </Field>
         </FormRow>
-        <Field label="Paid to" htmlFor="exp-paidto">
-          <Input
-            id="exp-paidto"
-            value={paidTo}
-            onChange={(e) => setPaidTo(e.target.value)}
-            placeholder="Who was paid (optional)"
-          />
+        <Field label="Paid to" htmlFor="exp-paidto" error={errors.paidTo?.message}>
+          <Input id="exp-paidto" placeholder="Who was paid (optional)" {...register("paidTo")} />
         </Field>
-        <Field label="Description" htmlFor="exp-desc">
-          <Input
-            id="exp-desc"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Optional"
-          />
+        <Field label="Description" htmlFor="exp-desc" error={errors.description?.message}>
+          <Input id="exp-desc" placeholder="Optional" {...register("description")} />
         </Field>
 
         <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border/70 bg-muted/30 px-3 py-2.5 text-sm font-medium">
-          <input
-            type="checkbox"
-            checked={isPettyCash}
-            onChange={(e) => setIsPettyCash(e.target.checked)}
-            className="size-4"
-          />
+          <input type="checkbox" className="size-4" {...register("isPettyCash")} />
           Mark as petty cash
         </label>
 
@@ -213,7 +204,7 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
             {error}
           </div>
         ) : null}
-      </div>
+      </form>
     </Modal>
   );
 }

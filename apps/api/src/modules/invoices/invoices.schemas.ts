@@ -1,12 +1,26 @@
-import { paginationQuerySchema } from "@construction-erp/shared";
+import {
+  dateSchema,
+  moneySchema,
+  optionalPaymentModeSchema,
+  paginationQuerySchema,
+  quantitySchema,
+  searchSchema,
+} from "@construction-erp/shared";
 import { z } from "@hono/zod-openapi";
+import {
+  nullableGstin,
+  nullableHsn,
+  nullablePhone,
+  nullableStateCode,
+  nullableText,
+  requiredText,
+} from "../../common/validation";
 
 export const INVOICE_TYPES = ["tax", "bill"] as const;
 export const INVOICE_STATUSES = ["issued", "cancelled"] as const;
 export const INVOICE_PAYMENT_STATUSES = ["unpaid", "partial", "paid"] as const;
 export const SUPPLY_TYPES = ["intra", "inter"] as const;
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const personSchema = z.object({ id: z.string().uuid(), name: z.string() });
 
 export const invoiceIdParamSchema = z.object({
@@ -81,74 +95,103 @@ export const invoiceSchema = z
   .openapi("Invoice");
 
 // ─── Input ──────────────────────────────────────────────────────────────────────
-const gstinSchema = z
-  .string()
-  .trim()
-  .regex(/^[0-9A-Z]{15}$/, "GSTIN must be 15 characters (letters/digits).")
-  .nullable()
-  .optional();
-
-const stateCodeSchema = z
-  .string()
-  .trim()
-  .regex(/^\d{2}$/, "State code must be 2 digits.")
-  .nullable()
-  .optional();
-
-export const invoiceItemInputSchema = z.object({
-  materialId: z.string().uuid().nullable().optional(),
-  description: z.string().trim().min(1).max(200),
-  hsnCode: z.string().trim().max(10).nullable().optional(),
-  quantity: z.number().positive(),
-  unit: z.string().trim().max(40).nullable().optional(),
-  rate: z.number().nonnegative(),
-  discountAmount: z.number().nonnegative().optional(),
-  // Combined GST rate %, e.g. 18. Ignored (forced to 0) for `bill` invoices.
-  gstRate: z.number().min(0).max(50).optional(),
-});
+export const invoiceItemInputSchema = z
+  .object({
+    materialId: z.string().uuid().nullable().optional(),
+    description: requiredText(200, "Describe the item."),
+    hsnCode: nullableHsn,
+    quantity: quantitySchema(),
+    unit: nullableText(40),
+    rate: moneySchema(),
+    discountAmount: moneySchema().optional(),
+    // Combined GST rate %, e.g. 18. Ignored (forced to 0) for `bill` invoices.
+    gstRate: z.number().min(0).max(50).optional(),
+  })
+  // A discount larger than the line was previously clamped to 0 silently, so the
+  // printed invoice showed a discount that had never been applied. Reject it.
+  .refine((line) => (line.discountAmount ?? 0) <= line.quantity * line.rate, {
+    message: "The discount cannot be more than the line value.",
+    path: ["discountAmount"],
+  });
 
 const invoiceBaseFields = {
-  invoiceDate: z.string().regex(DATE_RE).optional(),
-  dueDate: z.string().regex(DATE_RE).nullable().optional(),
+  invoiceDate: dateSchema.optional(),
+  dueDate: z
+    .union([z.literal(""), z.null(), dateSchema])
+    .transform((v) => (v === "" || v === undefined ? null : v))
+    .nullable()
+    .optional(),
   reverseCharge: z.boolean().optional(),
-  placeOfSupply: z.string().trim().max(120).nullable().optional(),
+  placeOfSupply: nullableText(120),
   // Seller overrides — default from the site when omitted.
-  sellerName: z.string().trim().max(200).nullable().optional(),
-  sellerGstin: gstinSchema,
-  sellerAddress: z.string().trim().max(2000).nullable().optional(),
-  sellerState: z.string().trim().max(120).nullable().optional(),
-  sellerStateCode: stateCodeSchema,
+  sellerName: nullableText(200),
+  sellerGstin: nullableGstin,
+  sellerAddress: nullableText(2000),
+  sellerState: nullableText(120),
+  sellerStateCode: nullableStateCode,
   // Buyer.
-  buyerName: z.string().trim().min(1).max(200),
-  buyerGstin: gstinSchema,
-  buyerAddress: z.string().trim().max(2000).nullable().optional(),
-  buyerState: z.string().trim().max(120).nullable().optional(),
-  buyerStateCode: stateCodeSchema,
-  buyerContact: z.string().trim().max(60).nullable().optional(),
-  notes: z.string().trim().max(2000).nullable().optional(),
-  amountReceived: z.number().nonnegative().optional(),
-  paymentMode: z.string().trim().max(40).nullable().optional(),
-  items: z.array(invoiceItemInputSchema).min(1, "Add at least one line item."),
+  buyerName: requiredText(200, "Enter the buyer's name."),
+  buyerGstin: nullableGstin,
+  buyerAddress: nullableText(2000),
+  buyerState: nullableText(120),
+  buyerStateCode: nullableStateCode,
+  buyerContact: nullablePhone,
+  notes: nullableText(2000),
+  amountReceived: moneySchema().optional(),
+  paymentMode: optionalPaymentModeSchema.nullable(),
+  // Capped: an unbounded array lets one request carry 100k line items.
+  items: z
+    .array(invoiceItemInputSchema)
+    .min(1, "Add at least one line item.")
+    .max(200, "An invoice can have at most 200 line items."),
 };
+
+/**
+ * Cross-field rules that need the whole body. Applied to create and update alike.
+ *  - A due date before the invoice date is a data-entry slip, not a valid term.
+ *  - `amountReceived` above the invoice value would mark it "paid" and corrupt
+ *    the receivables ledger (the same guard purchases has always had).
+ */
+function checkDueDate(
+  body: { invoiceDate?: string; dueDate?: string | null },
+  ctx: z.RefinementCtx,
+): void {
+  if (body.invoiceDate && body.dueDate && body.dueDate < body.invoiceDate) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "The due date cannot be before the invoice date.",
+      path: ["dueDate"],
+    });
+  }
+}
 
 export const createInvoiceBodySchema = z
   .object({
     invoiceType: z.enum(INVOICE_TYPES),
     ...invoiceBaseFields,
   })
+  .superRefine(checkDueDate)
   .openapi("CreateInvoiceRequest");
 
 /** Update replaces the header details and the full set of line items. */
-export const updateInvoiceBodySchema = z.object(invoiceBaseFields).openapi("UpdateInvoiceRequest");
+export const updateInvoiceBodySchema = z
+  .object(invoiceBaseFields)
+  .superRefine(checkDueDate)
+  .openapi("UpdateInvoiceRequest");
 
-export const listInvoicesQuerySchema = paginationQuerySchema.extend({
-  search: z.string().optional().openapi({ description: "Match invoice number or buyer name." }),
-  invoiceType: z.enum(INVOICE_TYPES).optional(),
-  status: z.enum(INVOICE_STATUSES).optional(),
-  paymentStatus: z.enum(INVOICE_PAYMENT_STATUSES).optional(),
-  dateFrom: z.string().regex(DATE_RE).optional(),
-  dateTo: z.string().regex(DATE_RE).optional(),
-});
+export const listInvoicesQuerySchema = paginationQuerySchema
+  .extend({
+    search: searchSchema.openapi({ description: "Match invoice number or buyer name." }),
+    invoiceType: z.enum(INVOICE_TYPES).optional(),
+    status: z.enum(INVOICE_STATUSES).optional(),
+    paymentStatus: z.enum(INVOICE_PAYMENT_STATUSES).optional(),
+    dateFrom: dateSchema.optional(),
+    dateTo: dateSchema.optional(),
+  })
+  .refine((q) => !q.dateFrom || !q.dateTo || q.dateFrom <= q.dateTo, {
+    message: "The start date must be before the end date.",
+    path: ["dateTo"],
+  });
 
 export const cancelInvoiceBodySchema = z
   .object({ status: z.literal("cancelled") })
@@ -156,8 +199,10 @@ export const cancelInvoiceBodySchema = z
 
 export const recordInvoicePaymentBodySchema = z
   .object({
-    amountReceived: z.number().nonnegative(),
-    paymentMode: z.string().trim().max(40).nullable().optional(),
+    // The cap against `grandTotal` lives in the handler — the ceiling is a
+    // property of the invoice being paid, which the schema cannot see.
+    amountReceived: moneySchema(),
+    paymentMode: optionalPaymentModeSchema.nullable(),
   })
   .openapi("RecordInvoicePaymentRequest");
 

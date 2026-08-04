@@ -97,7 +97,7 @@ export default function UsersPage() {
               key={s}
               type="button"
               onClick={() => setStatusFilter(s)}
-              className={`rounded-md border px-3 py-2 text-sm capitalize transition-colors ${
+              className={`flex h-11 items-center rounded-md border px-3 text-sm capitalize transition-colors sm:h-10 ${
                 statusFilter === s
                   ? "border-primary bg-primary/10 text-primary"
                   : "text-muted-foreground hover:bg-accent"

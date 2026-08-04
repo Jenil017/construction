@@ -21,7 +21,10 @@ const buttonVariants = cva(
         // Mobile-first: 44px tall for comfortable touch, stepping down to the
         // denser desktop size at sm+ where pointer precision is higher.
         default: "h-11 px-4 py-2 sm:h-10",
-        sm: "h-9 rounded-md px-3 text-xs sm:h-8",
+        // 40px on touch: `sm` is used for row actions (Edit / Delete / Download),
+        // which are the primary way to act on a record on a phone. Not the full
+        // 44px — that would defeat the compact variant — but 36px was too small.
+        sm: "h-10 rounded-md px-3 text-xs sm:h-8",
         lg: "h-11 rounded-lg px-6 text-[15px]",
         icon: "size-11 sm:size-10",
       },

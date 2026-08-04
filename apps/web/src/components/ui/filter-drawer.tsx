@@ -80,7 +80,7 @@ export function FilterDrawer({ fields, values, onChange, className }: FilterDraw
       type="button"
       onClick={() => setOpen(true)}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent",
+        "inline-flex h-11 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium transition-colors hover:bg-accent sm:h-10",
         activeCount > 0 && "border-primary/50 text-primary",
         className,
       )}

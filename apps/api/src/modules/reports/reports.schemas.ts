@@ -1,8 +1,6 @@
-import { paginationQuerySchema } from "@construction-erp/shared";
+import { dateSchema, paginationQuerySchema } from "@construction-erp/shared";
 import type { RbacModule } from "@construction-erp/shared";
 import { z } from "@hono/zod-openapi";
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Output formats an export can be generated in. */
 export const EXPORT_FORMATS = ["csv", "pdf"] as const;
@@ -103,8 +101,8 @@ export function findReportType(key: string): ReportTypeDef | undefined {
 
 export const exportParamsSchema = z
   .object({
-    dateFrom: z.string().regex(DATE_RE).optional(),
-    dateTo: z.string().regex(DATE_RE).optional(),
+    dateFrom: dateSchema.optional(),
+    dateTo: dateSchema.optional(),
   })
   .openapi("ExportParams");
 

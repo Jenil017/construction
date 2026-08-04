@@ -4,7 +4,7 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { type SQL, and, asc, count, desc, eq, gte, ilike, isNull, lte, or, sql } from "drizzle-orm";
 import { writeAudit } from "../../common/audit";
 import { type DbClient, getDb } from "../../common/db";
-import { ConflictError, NotFoundError } from "../../common/errors";
+import { ConflictError, NotFoundError, ValidationError } from "../../common/errors";
 import { getRequestMeta } from "../../common/http/request-meta";
 import { idempotency } from "../../common/idempotency";
 import { requireAuth } from "../../common/middleware/require-auth";
@@ -187,6 +187,20 @@ function derivePaymentStatus(total: number, received: number): "unpaid" | "parti
   if (received <= 0) return "unpaid";
   if (received >= total) return "paid";
   return "partial";
+}
+
+/**
+ * Money received can never exceed the sale it settles — otherwise the sale is
+ * marked "paid" on an amount that was never owed and every revenue total built
+ * on `amount_received` is wrong. Mirrors the same guard in purchases/invoices.
+ */
+function assertReceivedWithinTotal(received: number, total: number): number {
+  if (received > total) {
+    throw new ValidationError("The amount received cannot exceed the sale total.", {
+      fields: { amountReceived: "Cannot exceed the sale total." },
+    });
+  }
+  return received;
 }
 
 // ─── Available materials (dropdown source) ──────────────────────────────────────
@@ -376,7 +390,7 @@ sellingRoutes.openapi(createRouteDef, async (c) => {
 
   const rate = round2(body.ratePerUnit);
   const total = round2(qty * rate);
-  const amtReceived = round2(body.amountReceived ?? 0);
+  const amtReceived = assertReceivedWithinTotal(round2(body.amountReceived ?? 0), total);
   const paymentStatus = derivePaymentStatus(total, amtReceived);
   const saleDate = body.saleDate ?? today();
   const buyerName = body.buyerName?.trim() || null;
@@ -521,6 +535,14 @@ sellingRoutes.openapi(updateRouteDef, async (c) => {
   if (body.ratePerUnit !== undefined) {
     const newRate = round2(body.ratePerUnit);
     const newTotal = round2(Number(existing.quantity) * newRate);
+    // Lowering the rate can leave an already-recorded receipt above the new
+    // total; refuse rather than silently leave the sale over-paid.
+    if (Number(existing.amountReceived) > newTotal) {
+      throw new ValidationError(
+        "This rate would make the sale total less than the amount already received.",
+        { fields: { ratePerUnit: "Too low for the payment already recorded." } },
+      );
+    }
     updates.ratePerUnit = String(newRate);
     updates.totalAmount = String(newTotal);
     updates.paymentStatus = derivePaymentStatus(newTotal, Number(existing.amountReceived));
@@ -681,8 +703,8 @@ sellingRoutes.openapi(paymentRouteDef, async (c) => {
   const existing = await loadRawSale(db, siteId, id);
   if (!existing) throw new NotFoundError("Sale not found.");
 
-  const received = round2(amountReceived);
   const total = Number(existing.totalAmount);
+  const received = assertReceivedWithinTotal(round2(amountReceived), total);
   const newPaymentStatus = derivePaymentStatus(total, received);
 
   const updates: Record<string, unknown> = {

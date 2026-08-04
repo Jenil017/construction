@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Field } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
@@ -15,14 +16,36 @@ import {
   useUpdateDpr,
   useUploadDprPhoto,
 } from "@/lib/hooks/use-dpr";
+import { formOptionalQuantity, optionalStringMax } from "@/lib/validation/forms";
+import { pastOrTodayOrBlankSchema, today } from "@construction-erp/shared";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Camera, ClipboardList, ImagePlus, Loader2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 interface DprFormModalProps {
   open: boolean;
   onClose: () => void;
   dpr?: DprRow | null;
 }
+
+/**
+ * Mirrors `dpr.schemas.ts`. The report date cannot be in the future — a DPR
+ * records work that has happened. Maxes track the DB column widths.
+ */
+const dprFormSchema = z.object({
+  reportDate: pastOrTodayOrBlankSchema,
+  workCategory: optionalStringMax(120),
+  location: optionalStringMax(200),
+  completedWork: optionalStringMax(2000),
+  pendingWork: optionalStringMax(2000),
+  quantityValue: formOptionalQuantity({ allowZero: true }),
+  quantityUnit: optionalStringMax(40),
+  remarks: optionalStringMax(2000),
+});
+
+type DprFormValues = z.input<typeof dprFormSchema>;
 
 interface PendingPhoto {
   id: string;
@@ -32,10 +55,6 @@ interface PendingPhoto {
 
 const textareaClass =
   "flex min-h-[72px] w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow,border-color] placeholder:text-muted-foreground/60 hover:border-foreground/25 focus-visible:border-accent-solid focus-visible:ring-2 focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 export function DprFormModal({ open, onClose, dpr }: DprFormModalProps) {
   const isEdit = !!dpr;
@@ -47,14 +66,24 @@ export function DprFormModal({ open, onClose, dpr }: DprFormModalProps) {
   const cameraRef = useRef<HTMLInputElement>(null);
   const deviceRef = useRef<HTMLInputElement>(null);
 
-  const [reportDate, setReportDate] = useState(today());
-  const [workCategory, setWorkCategory] = useState("");
-  const [location, setLocation] = useState("");
-  const [completedWork, setCompletedWork] = useState("");
-  const [pendingWork, setPendingWork] = useState("");
-  const [quantityValue, setQuantityValue] = useState("");
-  const [quantityUnit, setQuantityUnit] = useState("");
-  const [remarks, setRemarks] = useState("");
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<DprFormValues>({
+    resolver: zodResolver(dprFormSchema),
+    defaultValues: {
+      reportDate: today(),
+      workCategory: "",
+      location: "",
+      completedWork: "",
+      pendingWork: "",
+      quantityValue: "",
+      quantityUnit: "",
+      remarks: "",
+    },
+  });
 
   // Photos already saved (edit mode) and ones picked but not yet uploaded.
   const [existing, setExisting] = useState<DprPhoto[]>([]);
@@ -67,19 +96,21 @@ export function DprFormModal({ open, onClose, dpr }: DprFormModalProps) {
   useEffect(() => {
     if (!open) return;
     setError(null);
-    setReportDate(dpr?.reportDate ?? today());
-    setWorkCategory(dpr?.workCategory ?? "");
-    setLocation(dpr?.location ?? "");
-    setCompletedWork(dpr?.completedWork ?? "");
-    setPendingWork(dpr?.pendingWork ?? "");
-    setQuantityValue(dpr?.quantityValue != null ? String(dpr.quantityValue) : "");
-    setQuantityUnit(dpr?.quantityUnit ?? "");
-    setRemarks(dpr?.remarks ?? "");
+    reset({
+      reportDate: dpr?.reportDate ?? today(),
+      workCategory: dpr?.workCategory ?? "",
+      location: dpr?.location ?? "",
+      completedWork: dpr?.completedWork ?? "",
+      pendingWork: dpr?.pendingWork ?? "",
+      quantityValue: dpr?.quantityValue != null ? String(dpr.quantityValue) : "",
+      quantityUnit: dpr?.quantityUnit ?? "",
+      remarks: dpr?.remarks ?? "",
+    });
     setExisting(dpr?.photos ?? []);
     setRemovedIds([]);
     setPending([]);
     setCommittedId(dpr?.id ?? null);
-  }, [open, dpr]);
+  }, [open, dpr, reset]);
 
   // Release object URLs when the modal closes / unmounts.
   useEffect(() => {
@@ -110,28 +141,10 @@ export function DprFormModal({ open, onClose, dpr }: DprFormModalProps) {
 
   const visibleExisting = existing.filter((p) => !removedIds.includes(p.id));
 
-  const submit = async () => {
+  const submit = handleSubmit(async (values) => {
     setError(null);
-    if (!reportDate) {
-      setError("Report date is required.");
-      return;
-    }
-    const qty = quantityValue.trim() === "" ? null : Number(quantityValue);
-    if (qty != null && (Number.isNaN(qty) || qty < 0)) {
-      setError("Quantity must be a non-negative number.");
-      return;
-    }
-
-    const payload: CreateDprInput = {
-      reportDate,
-      workCategory: workCategory.trim() || null,
-      location: location.trim() || null,
-      completedWork: completedWork.trim() || null,
-      pendingWork: pendingWork.trim() || null,
-      quantityValue: qty,
-      quantityUnit: quantityUnit.trim() || null,
-      remarks: remarks.trim() || null,
-    };
+    // `values` is the schema output: trimmed, blanks already mapped to null.
+    const payload = values as unknown as CreateDprInput;
 
     try {
       // 1. Create once (or update); reuse the id on retry so we never duplicate.
@@ -174,9 +187,9 @@ export function DprFormModal({ open, onClose, dpr }: DprFormModalProps) {
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not save the report.");
     }
-  };
+  });
 
-  const busy = createDpr.isPending || updateDpr.isPending || uploadPhoto.isPending;
+  const busy = isSubmitting || createDpr.isPending || updateDpr.isPending || uploadPhoto.isPending;
 
   return (
     <Modal
@@ -198,91 +211,73 @@ export function DprFormModal({ open, onClose, dpr }: DprFormModalProps) {
     >
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="dpr-date">Date</Label>
-            <Input
-              id="dpr-date"
-              type="date"
-              value={reportDate}
-              onChange={(e) => setReportDate(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="dpr-category">Work category</Label>
+          <Field label="Date" htmlFor="dpr-date" required error={errors.reportDate?.message}>
+            <Input id="dpr-date" type="date" max={today()} {...register("reportDate")} />
+          </Field>
+          <Field label="Work category" htmlFor="dpr-category" error={errors.workCategory?.message}>
             <Input
               id="dpr-category"
-              value={workCategory}
-              onChange={(e) => setWorkCategory(e.target.value)}
               placeholder="e.g. RCC, Brickwork"
+              {...register("workCategory")}
             />
-          </div>
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="dpr-location">Floor / area / location</Label>
+          </Field>
+          <Field
+            label="Floor / area / location"
+            htmlFor="dpr-location"
+            error={errors.location?.message}
+            className="sm:col-span-2"
+          >
             <Input
               id="dpr-location"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
               placeholder="e.g. 3rd floor, Block A"
+              {...register("location")}
             />
-          </div>
+          </Field>
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="dpr-completed">Completed work</Label>
+        <Field label="Completed work" htmlFor="dpr-completed" error={errors.completedWork?.message}>
           <textarea
             id="dpr-completed"
-            value={completedWork}
-            onChange={(e) => setCompletedWork(e.target.value)}
             rows={2}
             className={textareaClass}
+            {...register("completedWork")}
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="dpr-pending">Pending work</Label>
+        </Field>
+        <Field label="Pending work" htmlFor="dpr-pending" error={errors.pendingWork?.message}>
           <textarea
             id="dpr-pending"
-            value={pendingWork}
-            onChange={(e) => setPendingWork(e.target.value)}
             rows={2}
             className={textareaClass}
+            {...register("pendingWork")}
           />
-        </div>
+        </Field>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="dpr-qty">Quantity</Label>
+          <Field label="Quantity" htmlFor="dpr-qty" error={errors.quantityValue?.message}>
             <Input
               id="dpr-qty"
               type="number"
+              inputMode="decimal"
               min="0"
               step="any"
-              value={quantityValue}
-              onChange={(e) => setQuantityValue(e.target.value)}
               placeholder="Optional"
+              {...register("quantityValue")}
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="dpr-unit">Unit</Label>
-            <Input
-              id="dpr-unit"
-              value={quantityUnit}
-              onChange={(e) => setQuantityUnit(e.target.value)}
-              placeholder="e.g. cum, sqm, bags"
-            />
-          </div>
+          </Field>
+          <Field label="Unit" htmlFor="dpr-unit" error={errors.quantityUnit?.message}>
+            <Input id="dpr-unit" placeholder="e.g. cum, sqm, bags" {...register("quantityUnit")} />
+          </Field>
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="dpr-remarks">Remarks</Label>
+        <Field label="Remarks" htmlFor="dpr-remarks" error={errors.remarks?.message}>
           <textarea
             id="dpr-remarks"
-            value={remarks}
-            onChange={(e) => setRemarks(e.target.value)}
             rows={2}
             placeholder="Optional"
             className={textareaClass}
+            {...register("remarks")}
           />
-        </div>
+        </Field>
 
         {/* Photos: camera or device, multiple allowed, with live previews. */}
         <div className="space-y-2">
@@ -357,9 +352,9 @@ export function DprFormModal({ open, onClose, dpr }: DprFormModalProps) {
                     type="button"
                     aria-label="Remove photo"
                     onClick={() => setRemovedIds((prev) => [...prev, photo.id])}
-                    className="absolute right-1 top-1 rounded-md bg-foreground/60 p-1 text-white opacity-0 transition-opacity hover:bg-danger group-hover:opacity-100"
+                    className="absolute right-1 top-1 flex size-9 items-center justify-center rounded-md bg-foreground/60 text-white transition-opacity hover:bg-danger [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
                   >
-                    <X className="size-3.5" />
+                    <X className="size-4" />
                   </button>
                 </div>
               ))}
@@ -377,9 +372,9 @@ export function DprFormModal({ open, onClose, dpr }: DprFormModalProps) {
                     type="button"
                     aria-label="Remove photo"
                     onClick={() => removePending(p.id)}
-                    className="absolute right-1 top-1 rounded-md bg-foreground/60 p-1 text-white opacity-0 transition-opacity hover:bg-danger group-hover:opacity-100"
+                    className="absolute right-1 top-1 flex size-9 items-center justify-center rounded-md bg-foreground/60 text-white transition-opacity hover:bg-danger [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
                   >
-                    <X className="size-3.5" />
+                    <X className="size-4" />
                   </button>
                 </div>
               ))}

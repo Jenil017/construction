@@ -1,4 +1,4 @@
-import { siteMemberPermissions, siteMembers, users } from "@construction-erp/db/schema";
+import { siteMemberPermissions, siteMembers, sites, users } from "@construction-erp/db/schema";
 import {
   type AccessLevel,
   type RbacModule,
@@ -8,7 +8,7 @@ import {
   hashPassword,
 } from "@construction-erp/shared";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
-import { and, asc, count, desc, eq, ilike, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNull, ne, or } from "drizzle-orm";
 import { writeAudit } from "../../common/audit";
 import { revokeUserSessions } from "../../common/auth";
 import { type DbClient, getDb } from "../../common/db";
@@ -69,6 +69,78 @@ async function findMembership(
     .where(and(eq(siteMembers.siteId, siteId), eq(siteMembers.userId, userId)))
     .limit(1);
   return row?.id ?? null;
+}
+
+/**
+ * The tenant boundary for user accounts.
+ *
+ * A user "belongs to" the owner of the active site if they own it or are a
+ * member of any site that owner owns. Every user lookup and every write to the
+ * `users` table in this module is scoped through here, because `users` is the
+ * one table without a `siteId` — an unscoped query on it reaches other tenants.
+ *
+ * Two rules follow, and both matter:
+ *  - You may never read or write a user outside your own tenant.
+ *  - You must not be able to *detect* one either. A user who exists in another
+ *    tenant has to be indistinguishable from an email nobody has ever used, or
+ *    the difference itself discloses a competitor's staff (see `resolveTenantUser`).
+ */
+async function tenantOwnerId(db: DbClient, siteId: string): Promise<string> {
+  const [site] = await db
+    .select({ ownerUserId: sites.ownerUserId })
+    .from(sites)
+    .where(and(eq(sites.id, siteId), isNull(sites.deletedAt)))
+    .limit(1);
+  if (!site) throw new NotFoundError("Site not found.");
+  return site.ownerUserId;
+}
+
+/**
+ * Find a user by email *within the acting tenant only*, and report whether the
+ * email is claimed anywhere at all.
+ *
+ * `user` is the in-tenant match (null if none). `emailTaken` is true when the
+ * address exists in this deployment even outside the tenant — the caller needs
+ * it to avoid attempting an insert that would hit the global `users.email`
+ * unique constraint, but must never surface the distinction to the client.
+ */
+async function resolveTenantUser(
+  db: DbClient,
+  ownerUserId: string,
+  email: string,
+): Promise<{ user: UserRow | null; emailTaken: boolean }> {
+  const [account] = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      phone: users.phone,
+      status: users.status,
+      lastLoginAt: users.lastLoginAt,
+      createdAt: users.createdAt,
+    })
+    .from(users)
+    .where(and(eq(users.email, email), isNull(users.deletedAt)))
+    .limit(1);
+  if (!account) return { user: null, emailTaken: false };
+
+  if (account.id === ownerUserId) return { user: account, emailTaken: true };
+
+  // In-tenant iff they are a member of some site this owner owns.
+  const [shared] = await db
+    .select({ id: siteMembers.id })
+    .from(siteMembers)
+    .innerJoin(sites, eq(sites.id, siteMembers.siteId))
+    .where(
+      and(
+        eq(siteMembers.userId, account.id),
+        eq(sites.ownerUserId, ownerUserId),
+        isNull(sites.deletedAt),
+      ),
+    )
+    .limit(1);
+
+  return { user: shared ? account : null, emailTaken: true };
 }
 
 /** Per-module levels for a set of memberships in one query (avoids N+1). */
@@ -188,8 +260,9 @@ const createUserRoute = createRoute({
   tags: ["Users"],
   summary: "Add a member to the active site",
   description:
-    "Permission: users:create. Creates a new user (password required) or adds an existing " +
-    "user (by email) to this site, with the given per-module access.",
+    "Permission: users:create. Creates a new user (password required), or adds one of your " +
+    "own existing users (by email) to this site, with the given per-module access. Accounts " +
+    "outside your organisation are never reachable by email.",
   middleware: [requireAuth, requireSiteContext, requirePermission("users", "create")] as const,
   request: {
     body: { content: { "application/json": { schema: createUserBodySchema } }, required: true },
@@ -218,19 +291,31 @@ userRoutes.openapi(createUserRoute, async (c) => {
   const siteId = auth.siteId as string;
   const email = body.email.trim().toLowerCase();
 
-  const [existing] = await db
-    .select()
-    .from(users)
-    .where(and(eq(users.email, email), isNull(users.deletedAt)))
-    .limit(1);
+  // Only ever resolve an existing account inside our own tenant. An account
+  // belonging to another contractor must be unreachable here — attaching it
+  // would hand us their staff member (and, via PATCH, their password).
+  const ownerUserId = await tenantOwnerId(db, siteId);
+  const { user: existing, emailTaken } = await resolveTenantUser(db, ownerUserId, email);
 
   if (existing) {
     const already = await findMembership(db, siteId, existing.id);
     if (already) throw new ConflictError("This user is already a member of this site.");
-  } else if (!body.password) {
-    throw new ValidationError("A password is required to create a new user.", {
-      fields: { password: "A password is required to create a new user." },
-    });
+  } else {
+    // Not an account we can see. Validate the request *before* considering
+    // whether the address is taken elsewhere, so a foreign email and an unused
+    // email fail identically at every step — otherwise the order of these two
+    // checks is itself an oracle for "does this address exist?".
+    if (!body.password) {
+      throw new ValidationError("A password is required to create a new user.", {
+        fields: { password: "A password is required to create a new user." },
+      });
+    }
+    if (emailTaken) {
+      // Belongs to another tenant. Refuse with a message that says nothing
+      // about who holds it — naming it as "already registered" would disclose
+      // another contractor's staff to anyone who can guess an address.
+      throw new ConflictError("This email address is not available.");
+    }
   }
 
   const passwordHash = existing ? null : await hashPassword(body.password as string);
@@ -340,6 +425,43 @@ userRoutes.openapi(updateUserRoute, async (c) => {
     .where(and(eq(users.id, id), isNull(users.deletedAt)))
     .limit(1);
   if (!existing) throw new NotFoundError("User not found.");
+
+  // `name`/`phone`/`status`/`password` are account-global, not per-site — this
+  // is the one place in the module that writes outside the site boundary. Site
+  // membership alone is not enough authority: refuse to touch the account of
+  // anyone who also belongs to another tenant, so a stray membership can never
+  // become a password reset on someone else's user. Permission changes below
+  // are site-local and stay allowed.
+  const ownerUserId = await tenantOwnerId(db, siteId);
+  const touchesAccount =
+    body.name !== undefined ||
+    body.phone !== undefined ||
+    body.status !== undefined ||
+    body.password !== undefined;
+  if (touchesAccount && existing.id !== ownerUserId) {
+    const [foreign] = await db
+      .select({ id: sites.id })
+      .from(siteMembers)
+      .innerJoin(sites, eq(sites.id, siteMembers.siteId))
+      .where(
+        and(
+          eq(siteMembers.userId, id),
+          ne(sites.ownerUserId, ownerUserId),
+          isNull(sites.deletedAt),
+        ),
+      )
+      .limit(1);
+    const [ownsSites] = await db
+      .select({ id: sites.id })
+      .from(sites)
+      .where(and(eq(sites.ownerUserId, id), isNull(sites.deletedAt)))
+      .limit(1);
+    if (foreign || ownsSites) {
+      throw new ConflictError(
+        "This user's account is managed elsewhere. You can change their access on this site, but not their profile or password.",
+      );
+    }
+  }
 
   const disabling = body.status === "disabled" && existing.status !== "disabled";
   if (disabling && id === auth.userId) {

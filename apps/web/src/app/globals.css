@@ -171,6 +171,46 @@
 }
 
 @layer utilities {
+  /* Safe-area insets. The viewport is `viewport-fit: cover` (app/layout.tsx), so
+     anything pinned to a screen edge sits under the notch / home indicator on
+     modern phones unless it opts in. `max()` keeps the normal padding on every
+     device that reports a 0 inset, so these are safe to apply unconditionally. */
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  /* Edge-anchored surfaces (bottom sheets, drawers) that already have padding. */
+  .pb-safe-4 {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+  .pl-safe {
+    padding-left: env(safe-area-inset-left);
+  }
+
+  /* For elements that ALSO carry a Tailwind padding utility. `max()` keeps the
+     larger of the two, so the existing padding is never reduced and the inset is
+     honoured when it exceeds it. Declared after the plain variants so a single
+     class wins predictably. In landscape the notch takes a side margin rather
+     than the top one, which is why the horizontal case exists at all. */
+  .px-safe-4 {
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+  @media (min-width: 640px) {
+    .px-safe-4 {
+      padding-left: max(1.5rem, env(safe-area-inset-left));
+      padding-right: max(1.5rem, env(safe-area-inset-right));
+    }
+  }
+  @media (min-width: 1024px) {
+    .px-safe-4 {
+      padding-left: max(2rem, env(safe-area-inset-left));
+      padding-right: max(2rem, env(safe-area-inset-right));
+    }
+  }
+
   /* Mono, tabular figures for amounts, stock, KPIs. */
   .nums {
     font-family: var(--font-mono);

@@ -1,8 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Field, FormRow } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
 import { ApiError } from "@/lib/api-client";
 import {
@@ -12,8 +12,17 @@ import {
   useCreateMaterial,
   useUpdateMaterial,
 } from "@/lib/hooks/use-inventory";
+import {
+  formOptionalMoney,
+  formOptionalQuantity,
+  optionalStringMax,
+  requiredString,
+} from "@/lib/validation/forms";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Package } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 interface MaterialFormModalProps {
   open: boolean;
@@ -24,102 +33,92 @@ interface MaterialFormModalProps {
 const textareaClass =
   "flex min-h-[72px] w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow,border-color] placeholder:text-muted-foreground/60 hover:border-foreground/25 focus-visible:border-accent-solid focus-visible:ring-2 focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50";
 
-/** Parse a non-negative number field; "" → null, invalid → NaN (caught on submit). */
-function parseOptionalNumber(raw: string): number | null {
-  const trimmed = raw.trim();
-  if (trimmed === "") return null;
-  return Number(trimmed);
-}
+/** Mirrors the API's material schema (`createMaterialBodySchema`); maxes track the DB columns. */
+const materialFormSchema = z.object({
+  name: requiredString(160, "Enter the material's name."),
+  unit: requiredString(40, "Unit is required (e.g. bags, cum, kg, nos)."),
+  sku: optionalStringMax(60),
+  category: optionalStringMax(80),
+  reorderLevel: formOptionalQuantity({ allowZero: true }),
+  unitCost: formOptionalMoney(),
+  supplierRef: optionalStringMax(160),
+  openingStock: formOptionalQuantity({ allowZero: true }),
+  notes: optionalStringMax(2000),
+});
+
+/** The raw form values are all strings; the schema output is what the API takes. */
+type MaterialFormValues = z.input<typeof materialFormSchema>;
+
+const EMPTY: MaterialFormValues = {
+  name: "",
+  unit: "",
+  sku: "",
+  category: "",
+  reorderLevel: "",
+  unitCost: "",
+  supplierRef: "",
+  openingStock: "",
+  notes: "",
+};
 
 export function MaterialFormModal({ open, onClose, material }: MaterialFormModalProps) {
   const isEdit = !!material;
   const createMaterial = useCreateMaterial();
   const updateMaterial = useUpdateMaterial();
-
-  const [name, setName] = useState("");
-  const [unit, setUnit] = useState("");
-  const [sku, setSku] = useState("");
-  const [category, setCategory] = useState("");
-  const [reorderLevel, setReorderLevel] = useState("");
-  const [unitCost, setUnitCost] = useState("");
-  const [supplierRef, setSupplierRef] = useState("");
-  const [openingStock, setOpeningStock] = useState("");
-  const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<MaterialFormValues>({
+    resolver: zodResolver(materialFormSchema),
+    defaultValues: EMPTY,
+  });
 
   useEffect(() => {
     if (!open) return;
     setError(null);
-    setName(material?.name ?? "");
-    setUnit(material?.unit ?? "");
-    setSku(material?.sku ?? "");
-    setCategory(material?.category ?? "");
-    setReorderLevel(material?.reorderLevel != null ? String(material.reorderLevel) : "");
-    setUnitCost(material?.unitCost != null ? String(material.unitCost) : "");
-    setSupplierRef(material?.supplierRef ?? "");
-    setOpeningStock("");
-    setNotes(material?.notes ?? "");
-  }, [open, material]);
+    reset(
+      material
+        ? {
+            name: material.name,
+            unit: material.unit,
+            sku: material.sku ?? "",
+            category: material.category ?? "",
+            reorderLevel: material.reorderLevel != null ? String(material.reorderLevel) : "",
+            unitCost: material.unitCost != null ? String(material.unitCost) : "",
+            supplierRef: material.supplierRef ?? "",
+            openingStock: "",
+            notes: material.notes ?? "",
+          }
+        : EMPTY,
+    );
+  }, [open, material, reset]);
 
-  const submit = async () => {
+  const onSubmit = handleSubmit(async (values) => {
     setError(null);
-    if (!name.trim()) {
-      setError("Material name is required.");
-      return;
-    }
-    if (!unit.trim()) {
-      setError("Unit is required (e.g. bags, cum, kg, nos).");
-      return;
-    }
-
-    const reorder = parseOptionalNumber(reorderLevel);
-    const cost = parseOptionalNumber(unitCost);
-    const opening = parseOptionalNumber(openingStock);
-    for (const [value, label] of [
-      [reorder, "Reorder level"],
-      [cost, "Unit cost"],
-      [opening, "Opening stock"],
-    ] as const) {
-      if (value != null && (Number.isNaN(value) || value < 0)) {
-        setError(`${label} must be a non-negative number.`);
-        return;
-      }
-    }
-
+    // `values` is the schema *output*: trimmed, "" already mapped to null.
+    const { openingStock, ...master } = values as unknown as UpdateMaterialInput & {
+      openingStock: number | null;
+    };
     try {
       if (isEdit && material) {
-        const body: UpdateMaterialInput = {
-          name: name.trim(),
-          unit: unit.trim(),
-          sku: sku.trim() || null,
-          category: category.trim() || null,
-          reorderLevel: reorder,
-          unitCost: cost,
-          supplierRef: supplierRef.trim() || null,
-          notes: notes.trim() || null,
-        };
-        await updateMaterial.mutateAsync({ id: material.id, body });
+        await updateMaterial.mutateAsync({ id: material.id, body: master });
       } else {
-        const body: CreateMaterialInput = {
-          name: name.trim(),
-          unit: unit.trim(),
-          sku: sku.trim() || null,
-          category: category.trim() || null,
-          reorderLevel: reorder,
-          unitCost: cost,
-          supplierRef: supplierRef.trim() || null,
-          notes: notes.trim() || null,
-          ...(opening != null && opening > 0 ? { openingStock: opening } : {}),
-        };
-        await createMaterial.mutateAsync(body);
+        await createMaterial.mutateAsync({
+          ...(master as CreateMaterialInput),
+          ...(openingStock != null && openingStock > 0 ? { openingStock } : {}),
+        });
       }
       onClose();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not save the material.");
     }
-  };
+  });
 
-  const busy = createMaterial.isPending || updateMaterial.isPending;
+  const busy = isSubmitting || createMaterial.isPending || updateMaterial.isPending;
 
   return (
     <Modal
@@ -133,115 +132,99 @@ export function MaterialFormModal({ open, onClose, material }: MaterialFormModal
           <Button variant="outline" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={busy}>
+          <Button onClick={onSubmit} disabled={busy}>
             {busy ? "Saving…" : "Save"}
           </Button>
         </>
       }
     >
-      <div className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="mat-name">Name</Label>
-            <Input
-              id="mat-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. OPC 53 Cement"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="mat-unit">Unit</Label>
-            <Input
-              id="mat-unit"
-              value={unit}
-              onChange={(e) => setUnit(e.target.value)}
-              placeholder="bags, cum, kg, nos"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="mat-sku">SKU / code</Label>
-            <Input
-              id="mat-sku"
-              value={sku}
-              onChange={(e) => setSku(e.target.value)}
-              placeholder="Optional"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="mat-category">Category</Label>
+      <form onSubmit={onSubmit} className="space-y-4" noValidate>
+        <FormRow columns={2}>
+          <Field
+            label="Name"
+            htmlFor="mat-name"
+            required
+            error={errors.name?.message}
+            className="sm:col-span-2"
+          >
+            <Input id="mat-name" placeholder="e.g. OPC 53 Cement" {...register("name")} />
+          </Field>
+          <Field label="Unit" htmlFor="mat-unit" required error={errors.unit?.message}>
+            <Input id="mat-unit" placeholder="bags, cum, kg, nos" {...register("unit")} />
+          </Field>
+          <Field label="SKU / code" htmlFor="mat-sku" error={errors.sku?.message}>
+            <Input id="mat-sku" placeholder="Optional" {...register("sku")} />
+          </Field>
+          <Field label="Category" htmlFor="mat-category" error={errors.category?.message}>
             <Input
               id="mat-category"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
               placeholder="e.g. Cement, Steel, Aggregates"
+              {...register("category")}
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="mat-reorder">Reorder level</Label>
+          </Field>
+          <Field label="Reorder level" htmlFor="mat-reorder" error={errors.reorderLevel?.message}>
             <Input
               id="mat-reorder"
               type="number"
+              inputMode="decimal"
               min="0"
               step="any"
-              value={reorderLevel}
-              onChange={(e) => setReorderLevel(e.target.value)}
               placeholder="Low-stock alert below this"
+              {...register("reorderLevel")}
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="mat-cost">Unit cost (₹)</Label>
+          </Field>
+          <Field label="Unit cost (₹)" htmlFor="mat-cost" error={errors.unitCost?.message}>
             <Input
               id="mat-cost"
               type="number"
+              inputMode="decimal"
               min="0"
               step="any"
-              value={unitCost}
-              onChange={(e) => setUnitCost(e.target.value)}
               placeholder="Optional"
+              {...register("unitCost")}
             />
-          </div>
+          </Field>
           {!isEdit ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="mat-opening">Opening stock</Label>
+            <Field label="Opening stock" htmlFor="mat-opening" error={errors.openingStock?.message}>
               <Input
                 id="mat-opening"
                 type="number"
+                inputMode="decimal"
                 min="0"
                 step="any"
-                value={openingStock}
-                onChange={(e) => setOpeningStock(e.target.value)}
                 placeholder="Defaults to 0"
+                {...register("openingStock")}
               />
-            </div>
+            </Field>
           ) : null}
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="mat-supplier">Supplier reference</Label>
+          <Field
+            label="Supplier reference"
+            htmlFor="mat-supplier"
+            error={errors.supplierRef?.message}
+            className="sm:col-span-2"
+          >
             <Input
               id="mat-supplier"
-              value={supplierRef}
-              onChange={(e) => setSupplierRef(e.target.value)}
               placeholder="Supplier name / contact (optional)"
+              {...register("supplierRef")}
             />
-          </div>
-        </div>
+          </Field>
+        </FormRow>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="mat-notes">Notes</Label>
+        <Field label="Notes" htmlFor="mat-notes" error={errors.notes?.message}>
           <textarea
             id="mat-notes"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
             rows={2}
             placeholder="Optional"
             className={textareaClass}
+            {...register("notes")}
           />
-        </div>
+        </Field>
 
         {error ? (
           <div className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
         ) : null}
-      </div>
+      </form>
     </Modal>
   );
 }

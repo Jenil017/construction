@@ -1,5 +1,14 @@
-import { paginationQuerySchema } from "@construction-erp/shared";
+import {
+  dateSchema,
+  moneySchema,
+  optionalPaymentModeSchema,
+  paginationQuerySchema,
+  pastOrTodaySchema,
+  quantitySchema,
+  searchSchema,
+} from "@construction-erp/shared";
 import { z } from "@hono/zod-openapi";
+import { nullableText, requiredText } from "../../common/validation";
 
 export const PURCHASE_STATUSES = [
   "draft",
@@ -9,7 +18,6 @@ export const PURCHASE_STATUSES = [
   "cancelled",
 ] as const;
 export const PURCHASE_PAYMENT_STATUSES = ["unpaid", "partial", "paid"] as const;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const personSchema = z.object({ id: z.string().uuid(), name: z.string() });
 
@@ -61,45 +69,51 @@ export const purchaseDetailSchema = purchaseSchema
   .extend({ items: z.array(purchaseItemSchema) })
   .openapi("PurchaseDetail");
 
-export const listPurchasesQuerySchema = paginationQuerySchema.extend({
-  search: z.string().optional().openapi({ description: "Match PO number, seller name, or notes." }),
-  status: z.enum(PURCHASE_STATUSES).optional(),
-  paymentStatus: z.enum(PURCHASE_PAYMENT_STATUSES).optional(),
-  dateFrom: z.string().regex(DATE_RE).optional(),
-  dateTo: z.string().regex(DATE_RE).optional(),
-});
+export const listPurchasesQuerySchema = paginationQuerySchema
+  .extend({
+    search: searchSchema.openapi({ description: "Match PO number, seller name, or notes." }),
+    status: z.enum(PURCHASE_STATUSES).optional(),
+    paymentStatus: z.enum(PURCHASE_PAYMENT_STATUSES).optional(),
+    dateFrom: dateSchema.optional(),
+    dateTo: dateSchema.optional(),
+  })
+  .refine((q) => !q.dateFrom || !q.dateTo || q.dateFrom <= q.dateTo, {
+    message: "The start date must be before the end date.",
+    path: ["dateTo"],
+  });
 
 const itemInputSchema = z.object({
   materialId: z.string().uuid().nullable().optional(),
-  description: z.string().min(1).max(200),
-  quantity: z.number().positive(),
-  unit: z.string().max(40).nullable().optional(),
-  rate: z.number().nonnegative(),
+  description: requiredText(200),
+  quantity: quantitySchema(),
+  unit: nullableText(40),
+  rate: moneySchema(),
 });
 
 export const createPurchaseBodySchema = z
   .object({
-    sellerName: z.string().min(1).max(160),
-    poNumber: z.string().max(40).nullable().optional(),
-    orderDate: z.string().regex(DATE_RE).optional(),
-    notes: z.string().max(2000).nullable().optional(),
-    taxAmount: z.number().nonnegative().optional(),
-    amountPaid: z.number().nonnegative().optional(),
-    paymentMode: z.string().max(40).nullable().optional(),
+    sellerName: requiredText(160),
+    poNumber: nullableText(40),
+    orderDate: pastOrTodaySchema.optional(),
+    notes: nullableText(2000),
+    taxAmount: moneySchema().optional(),
+    amountPaid: moneySchema().optional(),
+    paymentMode: optionalPaymentModeSchema.nullable(),
     items: z.array(itemInputSchema).min(1).max(200),
   })
   .openapi("CreatePurchaseRequest");
 
 export const updatePurchaseBodySchema = z
   .object({
-    sellerName: z.string().min(1).max(160).optional(),
-    poNumber: z.string().max(40).nullable().optional(),
-    orderDate: z.string().regex(DATE_RE).optional(),
-    expectedDate: z.string().regex(DATE_RE).nullable().optional(),
-    notes: z.string().max(2000).nullable().optional(),
+    sellerName: requiredText(160).optional(),
+    poNumber: nullableText(40),
+    orderDate: pastOrTodaySchema.optional(),
+    // Deliveries are expected in the future — this one is not past-or-today.
+    expectedDate: dateSchema.nullable().optional(),
+    notes: nullableText(2000),
     status: z.enum(["draft", "ordered", "cancelled"]).optional(),
-    taxAmount: z.number().nonnegative().optional(),
-    paymentMode: z.string().max(40).nullable().optional(),
+    taxAmount: moneySchema().optional(),
+    paymentMode: optionalPaymentModeSchema.nullable(),
     /** Replaces all line items — allowed only while the purchase is a draft. */
     items: z.array(itemInputSchema).min(1).max(200).optional(),
   })
@@ -108,15 +122,21 @@ export const updatePurchaseBodySchema = z
 export const receivePurchaseBodySchema = z
   .object({
     items: z
-      .array(z.object({ itemId: z.string().uuid(), receivedQty: z.number().nonnegative() }))
-      .min(1),
+      .array(
+        z.object({
+          itemId: z.string().uuid(),
+          receivedQty: quantitySchema({ allowZero: true }),
+        }),
+      )
+      .min(1)
+      .max(200),
   })
   .openapi("ReceivePurchaseRequest");
 
 export const payPurchaseBodySchema = z
   .object({
-    amountPaid: z.number().nonnegative(),
-    paymentMode: z.string().max(40).nullable().optional(),
+    amountPaid: moneySchema(),
+    paymentMode: optionalPaymentModeSchema.nullable(),
   })
   .openapi("PayPurchaseRequest");
 
